@@ -270,10 +270,14 @@ def stop(run_id: int) -> None:
     if row["status"] not in storage.ACTIVE:
         console.print(f"[yellow]El run {run_id} ya no esta activo ({row['status']}).[/]")
         raise typer.Exit(1)
-    if row["kind"] == "plan":
-        console.print("[yellow]Es un plan: las tasks corren como hilos del proceso que lo lanzo. "
-                      "Mata ese proceso (o su terminal) para detenerlas.[/]")
-    elif not row["pid"]:
+    if row["kind"] == "plan" or (row["status"] == "running" and not row["pid"]):
+        # un plan, o una de sus tasks: corren como hilos dentro del proceso que lanzo el plan,
+        # no como proceso propio. No hay nada que matar aqui, y marcarlo "stopped" mentiria:
+        # el worker seguiria trabajando (y gastando DeepSeek) mientras el estado dice detenido.
+        console.print("[yellow]Es un plan (o una de sus tasks): corren como hilos del proceso que lo "
+                      "lanzo. Mata ese proceso (o su terminal) para detenerlas de verdad.[/]")
+        raise typer.Exit(1)
+    if not row["pid"]:
         console.print(f"[yellow]El run {run_id} no tiene un proceso propio todavia (sigue en cola).[/]")
     else:
         try:
