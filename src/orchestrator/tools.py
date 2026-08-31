@@ -91,7 +91,7 @@ def search_code(root: Path, query: str, path: str = ".") -> str:
     if shutil.which("rg"):
         r = subprocess.run(
             ["rg", "--line-number", "--no-heading", "--max-count", "50", query, str(target)],
-            capture_output=True, text=True, timeout=60,
+            capture_output=True, text=True, timeout=60, encoding="utf-8", errors="replace",
         )
         return _truncate(r.stdout) or "(sin resultados)"
     pattern = re.compile(query)
@@ -137,7 +137,7 @@ def shell(root: Path, command: str, timeout: int = 180) -> str:
     env = {k: v for k, v in os.environ.items() if not ENV_SECRETO.search(k)}
     try:
         r = subprocess.run(command, shell=True, cwd=root, capture_output=True, text=True,
-                           timeout=timeout, env=env)
+                           timeout=timeout, env=env, encoding="utf-8", errors="replace")
     except subprocess.TimeoutExpired:
         raise ToolError(f"timeout de {timeout}s: {command}")
     return _truncate(f"exit={r.returncode}\n{r.stdout}\n{r.stderr}".strip())
@@ -145,7 +145,8 @@ def shell(root: Path, command: str, timeout: int = 180) -> str:
 
 def git_diff(root: Path, path: str = "") -> str:
     args = ["git", "diff"] + ([path] if path else [])
-    r = subprocess.run(args, cwd=root, capture_output=True, text=True, timeout=60)
+    r = subprocess.run(args, cwd=root, capture_output=True, text=True, timeout=60,
+                       encoding="utf-8", errors="replace")
     return _truncate(r.stdout) or "(sin cambios)"
 
 

@@ -43,7 +43,8 @@ SOURCE_DIRS = ("src", "app", "lib", "packages")
 def git(cwd: Path, *args: str) -> str:
     """git ... en cwd; cadena vacia si falla."""
     try:
-        r = subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, timeout=10)
+        r = subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, timeout=10,
+                           encoding="utf-8", errors="replace")
     except (OSError, subprocess.SubprocessError):
         return ""
     return r.stdout.strip() if r.returncode == 0 else ""

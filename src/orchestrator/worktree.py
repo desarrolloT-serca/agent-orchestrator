@@ -24,7 +24,8 @@ def slug(text: str) -> str:
 
 
 def git(cwd: Path, *args: str, check: bool = True) -> str:
-    r = subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, timeout=120)
+    r = subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, timeout=120,
+                       encoding="utf-8", errors="replace")
     if check and r.returncode != 0:
         raise GitError(f"git {' '.join(args)}: {(r.stderr or r.stdout).strip()}")
     return r.stdout.strip()
@@ -70,7 +71,8 @@ def commit_all(path: Path, message: str) -> str | None:
 def cherry_pick(path: Path, shas: list[str]) -> None:
     """Aplica commits en orden. Si hay conflicto aborta y lo senala."""
     for sha in shas:
-        r = subprocess.run(["git", "cherry-pick", sha], cwd=path, capture_output=True, text=True, timeout=120)
+        r = subprocess.run(["git", "cherry-pick", sha], cwd=path, capture_output=True, text=True,
+                           timeout=120, encoding="utf-8", errors="replace")
         if r.returncode != 0:
             git(path, "cherry-pick", "--abort", check=False)
             raise IntegrationConflict(f"INTEGRATION_CONFLICT en {sha[:8]}: {(r.stdout + r.stderr).strip()[:500]}")

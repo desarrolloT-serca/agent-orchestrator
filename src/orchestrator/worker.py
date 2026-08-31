@@ -60,7 +60,8 @@ def validate(root: Path, config: dict, timeout: int = 900) -> dict:
         if not command:
             continue
         try:
-            r = subprocess.run(command, shell=True, cwd=root, capture_output=True, text=True, timeout=timeout)
+            r = subprocess.run(command, shell=True, cwd=root, capture_output=True, text=True,
+                               timeout=timeout, encoding="utf-8", errors="replace")
             output = (r.stdout + r.stderr).strip()
             results[name] = {"ok": r.returncode == 0, "command": command, "output": output[-2000:]}
         except subprocess.TimeoutExpired:
@@ -148,7 +149,7 @@ def run(
             status = "validation_failed"
 
     changed = subprocess.run(["git", "status", "--porcelain", "-uall"], cwd=root,
-                             capture_output=True, text=True).stdout
+                             capture_output=True, text=True, encoding="utf-8", errors="replace").stdout
     files = [line[3:] for line in changed.splitlines() if line.strip()]
     files = [f for f in files if "__pycache__" not in f and not tools.SECRET_FILES.search("/" + f)]
     return {
