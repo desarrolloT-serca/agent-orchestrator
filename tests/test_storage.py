@@ -20,6 +20,9 @@ def _repo() -> Path:
     (root / "app.py").write_text("VALUE = 1\n", encoding="utf-8")
     (root / ".env").write_text("DEEPSEEK_API_KEY=fake\n", encoding="utf-8")
     subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+    subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "add", "-A"], cwd=root, check=True)
+    subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init"],
+                   cwd=root, check=True)
     project.save(root, project.detect(root))
     return root
 
@@ -57,6 +60,11 @@ def test_run_persistido_y_recuperable():
     assert row["finished_at"] and row["pid"]
     assert [r["id"] for r in storage.list_runs(root)] == [run_id]
     assert storage.list_runs(root, active_only=True) == []
+
+    # la task suelta corrio en su propio worktree: el checkout principal no se toco
+    assert (root / "app.py").read_text(encoding="utf-8") == "VALUE = 1\n"
+    assert row["branch"] == f"agents/run-{run_id}"
+    assert (Path(row["worktree"]) / "app.py").read_text(encoding="utf-8") == "VALUE = 2\n"
 
 
 def test_fallo_persistido():

@@ -138,10 +138,16 @@ def doctor() -> None:
         (".agent/project.yaml", cfg is not None, "ok" if cfg else "ejecuta 'agents init'"),
         ("DEEPSEEK_API_KEY", bool(key), "presente" if key else "no definida (.env o entorno)"),
         ("Acceso DeepSeek", *_check_api(key)),
-        ("Base de datos", storage.DB_PATH.parent.exists() or True, str(storage.DB_PATH)),
         ("ripgrep (opcional)", bool(shutil.which("rg")), shutil.which("rg") or "no instalado"),
     ]
+    try:
+        with storage.connect():
+            pass
+        checks.append(("Base de datos", True, str(storage.DB_PATH)))
+    except Exception as exc:  # noqa: BLE001 - queremos el motivo exacto en el reporte
+        checks.append(("Base de datos", False, f"{exc.__class__.__name__}: {exc}"))
 
+    optional = {"ripgrep (opcional)"}
     for name, cmd in (cfg or {}).get("commands", {}).items():
         binary = cmd.split()[0]
         found = shutil.which(binary)
@@ -151,7 +157,7 @@ def doctor() -> None:
         mark = "[green]OK  [/]" if ok else "[red]FAIL[/]"
         console.print(f"{mark} {name:<24} {detail}")
 
-    if not all(ok for _, ok, _ in checks[:6]):
+    if not all(ok for name, ok, _ in checks if name not in optional):
         raise typer.Exit(1)
 
 
@@ -264,13 +270,25 @@ def stop(run_id: int) -> None:
     if row["status"] not in storage.ACTIVE:
         console.print(f"[yellow]El run {run_id} ya no esta activo ({row['status']}).[/]")
         raise typer.Exit(1)
-    try:
-        proc = psutil.Process(row["pid"])
-        for child in proc.children(recursive=True):
-            child.terminate()
-        proc.terminate()
-    except psutil.Error as exc:
-        console.print(f"[yellow]No se pudo matar el pid {row['pid']}: {exc}[/]")
+    if row["kind"] == "plan":
+        console.print("[yellow]Es un plan: las tasks corren como hilos del proceso que lo lanzo. "
+                      "Mata ese proceso (o su terminal) para detenerlas.[/]")
+    elif not row["pid"]:
+        console.print(f"[yellow]El run {run_id} no tiene un proceso propio todavia (sigue en cola).[/]")
+    else:
+        try:
+            proc = psutil.Process(row["pid"])
+            # el pid puede haberse reciclado para otro programa: solo lo matamos si es "nuestro"
+            es_nuestro = any("orchestrator.runner" in a for a in proc.cmdline())
+            if not es_nuestro:
+                console.print(f"[yellow]El pid {row['pid']} ya no es el worker (reutilizado por otro "
+                              "proceso); no se toca.[/]")
+            else:
+                for child in proc.children(recursive=True):
+                    child.terminate()
+                proc.terminate()
+        except psutil.Error as exc:
+            console.print(f"[yellow]No se pudo matar el pid {row['pid']}: {exc}[/]")
     storage.update_run(run_id, status="stopped", finished_at=storage.now())
     console.print(f"[green]Run {run_id} detenido.[/]")
 
@@ -287,6 +305,9 @@ def retry(
     new_id = storage.create_run(
         root,
         row["task"],
+        kind=row["kind"] or "task",
+        feature=row["feature"],
+        task_id=row["task_id"],
         project_name=row["project_name"],
         task_file=row["task_file"],
         model=model or row["model"],
@@ -294,6 +315,9 @@ def retry(
         parent_id=run_id,
     )
     console.print(f"[green]Reintento del run {run_id} -> run {new_id}[/]")
+    if row["task_id"] and row["kind"] != "plan":
+        console.print("[yellow]Nota:[/] era una task de un plan; el reintento va suelto en su propio "
+                      "worktree, sin los commits de sus dependencias ni reintegracion automatica.")
     _launch(new_id, root, detach)
 
 

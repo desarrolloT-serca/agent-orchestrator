@@ -32,11 +32,13 @@ def _prompt(feature: str, task: plan_module.Task) -> str:
     )
 
 
-def _run_task(root: Path, feature: str, task: plan_module.Task, run_id: int, config: dict,
+def _run_task(root: Path, feature: str, task: plan_module.Task, run_id: int, plan_id: int, config: dict,
               api_key: str, base: str, dep_shas: list[str],
               on_event: Callable[[str, str], None]) -> dict:
-    name = f"{worktree.slug(feature)}-{worktree.slug(task.id)}"
+    # plan_id en el nombre: dos ejecuciones de la misma feature no se pisan ni se borran ramas
+    name = f"{worktree.slug(feature)}-{plan_id}-{worktree.slug(task.id)}"
     try:
+        storage.update_run(run_id, status="running", started_at=storage.now())
         path, branch = worktree.create(root, name, base)
         storage.update_run(run_id, worktree=str(path), branch=branch)
         if dep_shas:
@@ -51,6 +53,10 @@ def _run_task(root: Path, feature: str, task: plan_module.Task, run_id: int, con
         )
         run_id = result.get("run_id", run_id)
         storage.update_run(run_id, worktree=str(path), branch=branch)
+        # el worker solo recibe el scope por prompt; esto lo verifica de verdad para hybrid-review
+        fuera = [f for f in result.get("files_changed", []) if not plan_module.in_scope(f, task.files)]
+        if fuera:
+            result.setdefault("issues", []).append(f"SCOPE_VIOLATION: fuera de {task.files}: {fuera}")
         if result["status"] in ("completed", "validation_failed"):
             result["sha"] = worktree.commit_all(path, f"agents({task.id}): {feature}")
         result["branch"] = branch
@@ -67,6 +73,9 @@ def execute_plan(root: Path, feature_plan: plan_module.Plan, config: dict, api_k
                  on_event: Callable[[str, str], None] = lambda kind, text: None) -> dict:
     """Ejecuta el plan completo y deja una rama de integracion."""
     started = time.time()
+    # identifica esta ejecucion del plan en los nombres de rama/worktree: sin esto, relanzar
+    # la misma feature borraria (via worktree.create) los worktrees y ramas de la vez anterior
+    plan_id = parent_id if parent_id is not None else int(started)
     base = worktree.head(root)
     max_parallel = config.get("workers", {}).get("max_parallel", 3)
     default_model = config.get("workers", {}).get("default_model")
@@ -104,7 +113,7 @@ def execute_plan(root: Path, feature_plan: plan_module.Plan, config: dict, api_k
                 if any(plan_module.overlap(task.files, otra.files) for otra in corriendo):
                     continue
                 dep_shas = [shas[d] for d in task.depends_on if d in shas]
-                future = pool.submit(_run_task, root, feature, task, runs[task_id], config,
+                future = pool.submit(_run_task, root, feature, task, runs[task_id], plan_id, config,
                                      api_key, base, dep_shas, on_event)
                 futures[future] = task
                 corriendo.append(task)
@@ -122,7 +131,7 @@ def execute_plan(root: Path, feature_plan: plan_module.Plan, config: dict, api_k
     status = "completed" if completadas and len(results) == len(feature_plan.tasks) else "failed"
     branch = summary = None
     if status == "completed" and shas:
-        name = f"{worktree.slug(feature)}-integration"
+        name = f"{worktree.slug(feature)}-{plan_id}-integration"
         path, branch = worktree.create(root, name, base)
         on_event("task", f"[integracion] cherry-pick en {path.name}")
         try:

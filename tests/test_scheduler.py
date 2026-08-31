@@ -60,6 +60,13 @@ def test_orden_topologico_y_ciclos():
         raise AssertionError("deberia detectar el ciclo")
 
 
+def test_scope_violation_se_detecta():
+    assert plan_module.in_scope("src/server/api.ts", ["src/server/**"])
+    assert not plan_module.in_scope("src/app/page.tsx", ["src/server/**"])
+    assert plan_module.in_scope("cualquier/cosa.ts", [])  # sin ownership declarado, todo vale
+    assert not plan_module.in_scope("src/application/x.py", ["src/app"])  # sin \/ de por medio
+
+
 def test_ownership_solapado():
     assert plan_module.overlap(["src/server/**"], ["src/server/api.ts"])
     assert not plan_module.overlap(["src/server/**"], ["src/app/**"])
@@ -69,10 +76,11 @@ def test_ownership_solapado():
 def test_plan_completo_con_worktrees_e_integracion():
     root = _repo()
     worker.run = _fake_worker
-    result = scheduler.execute_plan(root, plan_module.Plan(**PLAN), project.load(root), "fake-key")
+    result = scheduler.execute_plan(root, plan_module.Plan(**PLAN), project.load(root), "fake-key",
+                                    parent_id=99)
 
     assert result["status"] == "completed"
-    assert result["integration_branch"] == "agents/notifications-integration"
+    assert result["integration_branch"] == "agents/notifications-99-integration"
     assert set(result["tasks"]) == {"backend", "frontend", "tests"}
 
     # la task dependiente vio el trabajo de sus dos dependencias (cherry-pick previo)
@@ -80,7 +88,7 @@ def test_plan_completo_con_worktrees_e_integracion():
     assert visto["backend"] == [] and visto["frontend"] == []
 
     # la rama de integracion tiene los tres commits
-    integracion = root / worktree.WORKTREES / "notifications-integration"
+    integracion = root / worktree.WORKTREES / "notifications-99-integration"
     assert sorted(p.name for p in integracion.glob("*.txt")) == ["backend.txt", "frontend.txt", "tests.txt"]
 
     # el repositorio principal sigue intacto

@@ -53,6 +53,17 @@ def load(path: Path) -> Plan:
     return Plan(**yaml.safe_load(path.read_text(encoding="utf-8")))
 
 
+def in_scope(path: str, files: list[str]) -> bool:
+    """True si path cae dentro del ownership declarado (sin declarar = todo vale)."""
+    if not files:
+        return True
+    for patron in files:
+        prefijo = patron.split("*")[0].rstrip("/")
+        if path == prefijo or path.startswith(prefijo + "/"):
+            return True
+    return False
+
+
 def overlap(a: list[str], b: list[str]) -> bool:
     """True si dos tasks declaran ficheros solapados (el scheduler las serializa)."""
     if not a or not b:
