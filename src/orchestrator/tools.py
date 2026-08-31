@@ -2,15 +2,26 @@
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import subprocess
 from pathlib import Path
 
 MAX_OUTPUT = 20_000  # caracteres devueltos al modelo
+MAX_SHELL_TIMEOUT = 300  # el modelo elige el timeout del tool call; esto le pone techo
 
 # ficheros que el worker nunca puede leer ni escribir
 SECRET_FILES = re.compile(r"(^|/)\.env|\.(pem|key|p12|pfx)$|(^|/)id_(rsa|ed25519)$", re.I)
+
+# lo mismo pero para detectarlo dentro de un comando de shell (cat .env, type id_rsa...):
+# read_file/edit_file pasan por safe_path(), pero shell() es texto libre y esto no lo cubre
+SECRET_IN_SHELL = re.compile(
+    r"(?:^|[\s/\\'\"])\.env(?:[\s/\\'\";]|$)|\.(pem|key|p12|pfx)(?:[\s'\";]|$)|"
+    r"id_(rsa|ed25519)(?:[\s'\";]|$)", re.I)
+
+# variables de entorno que el subprocess de shell() no debe heredar del propio orquestador
+ENV_SECRETO = re.compile(r"(API_KEY|SECRET|TOKEN|PASSWORD)$", re.I)
 
 # comandos prohibidos (roadmap Fase 2: seguridad inicial)
 BLOCKED_COMMANDS = (
@@ -120,8 +131,13 @@ def shell(root: Path, command: str, timeout: int = 180) -> str:
     for blocked in BLOCKED_COMMANDS:
         if re.search(blocked, command, re.I):
             raise ToolError(f"comando bloqueado por politica de seguridad: {command}")
+    if SECRET_IN_SHELL.search(command):
+        raise ToolError("comando bloqueado: hace referencia a un fichero protegido (.env, claves...)")
+    timeout = min(timeout, MAX_SHELL_TIMEOUT)
+    env = {k: v for k, v in os.environ.items() if not ENV_SECRETO.search(k)}
     try:
-        r = subprocess.run(command, shell=True, cwd=root, capture_output=True, text=True, timeout=timeout)
+        r = subprocess.run(command, shell=True, cwd=root, capture_output=True, text=True,
+                           timeout=timeout, env=env)
     except subprocess.TimeoutExpired:
         raise ToolError(f"timeout de {timeout}s: {command}")
     return _truncate(f"exit={r.returncode}\n{r.stdout}\n{r.stderr}".strip())

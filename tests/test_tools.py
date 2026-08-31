@@ -59,3 +59,22 @@ if __name__ == "__main__":
         if name.startswith("test_"):
             fn()
     print("ok")
+
+
+def test_shell_no_hereda_secretos_ni_timeout_absurdo():
+    root = _root()
+    salida = tools.execute(root, "shell", {"command": "cat .env"})
+    assert "protegido" in salida
+    salida = tools.execute(root, "shell", {"command": "type .env"})
+    assert "protegido" in salida
+
+    import os
+    os.environ["DEEPSEEK_API_KEY"] = "no-deberia-verse"
+    try:
+        salida = tools.execute(root, "shell", {"command": "python -c \"import os; "
+                                                "print(os.environ.get('DEEPSEEK_API_KEY', 'ausente'))\""})
+    finally:
+        del os.environ["DEEPSEEK_API_KEY"]
+    assert "ausente" in salida and "no-deberia-verse" not in salida
+
+    assert tools.MAX_SHELL_TIMEOUT < 999999  # el modelo no puede pedir un timeout sin techo
