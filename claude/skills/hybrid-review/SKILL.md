@@ -24,6 +24,14 @@ Recorrela en este orden y no la abrevies:
 1. **Criterios de aceptacion** — ¿hace exactamente lo que pedia la tarea? ¿Todo?
 2. **Correccion** — casos limite, nulos, errores, concurrencia, tipos.
 3. **Arquitectura** — ¿respeta las capas y contratos del proyecto o mete logica donde no toca?
+3b. **Contrato entre workers en paralelo** — si viene de un `plan.yaml` con tasks
+   sin `depends_on` entre si que comparten una interfaz (p.ej. backend/frontend
+   y una API), compara el shape real de un lado contra el otro directamente
+   (el `res.json`/tipo de respuesta del backend contra el tipo que consume el
+   frontend), no confies en que los tests de cada lado pasen: cada worker
+   mockea al otro, asi que un desajuste de nombres de campo pasa los tests de
+   los dos lados y solo revienta en produccion. Comprobado en la practica:
+   fue el unico bug grave de un benchmark de 10 features reales.
 4. **Duplicacion** — ¿reimplemento algo que ya existia en el repo? Es el fallo mas
    frecuente: busca el helper equivalente antes de aceptar.
 5. **Seguridad** — entradas sin validar, secretos, permisos, SQL, rutas.

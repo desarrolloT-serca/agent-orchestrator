@@ -71,12 +71,22 @@ feature: notifications
 tasks:
   - id: backend
     description: |
-      Implementa la API de notificaciones en src/server/notifications.ts...
+      Implementa la API de notificaciones en src/server/notifications.ts.
+
+      Contrato con el frontend (task "frontend", en paralelo, no lo vera):
+      GET /api/notifications responde
+      { notifications: [{ id, title, read, createdAt }], total }.
+      No cambies estos nombres de campo sin avisar.
     files: [src/server/**]
     depends_on: []
   - id: frontend
     description: |
       Implementa la UI en src/app/notifications/...
+
+      Contrato con el backend (task "backend", en paralelo, no lo veras):
+      GET /api/notifications responde
+      { notifications: [{ id, title, read, createdAt }], total }.
+      Usa exactamente esos nombres de campo, no los inventes.
     files: [src/app/**]
     depends_on: []
   - id: tests
@@ -88,7 +98,16 @@ tasks:
 
 - `files` es propiedad exclusiva: si dos tasks se solapan, el scheduler las
   serializa y pierdes el paralelismo. Reparte por directorios disjuntos.
-- Lo que dependa de un contrato compartido va en `depends_on`, no en paralelo.
+- **Backend y frontend en paralelo (sin `depends_on` entre ellos) comparten
+  un contrato — la forma exacta de la API — que ninguno de los dos ve del
+  otro mientras trabaja.** Si no fijas ese contrato palabra por palabra en
+  AMBAS descripciones (mismos nombres de campo, mismo shape de respuesta),
+  cada worker se lo inventa por su cuenta, de forma coherente consigo mismo
+  pero no con el otro. Los tests de cada lado pasan igual porque cada uno
+  mockea al otro — el desajuste no se ve hasta produccion. Si el contrato es
+  complejo o no puedes fijarlo de antemano con precision, no lo pongas en
+  paralelo: usa `depends_on` (backend primero, frontend leyendo el codigo
+  real ya hecho).
 - `model: deepseek-v4-pro` en una task concreta si es la dificil.
 
 ## 5. Lanza y espera
