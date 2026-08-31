@@ -1,0 +1,33 @@
+---
+name: hybrid-status
+description: Consulta y resume el estado de los workers DeepSeek del orquestador (`agents status`, `logs`, `history`). Usala cuando el usuario pregunte que estan haciendo los agentes, si termino algo, cuanto se ha gastado o quiera retomar trabajo lanzado en una sesion anterior.
+---
+
+# hybrid-status
+
+## Comandos
+
+```bash
+agents status                  # runs del proyecto actual
+agents status <id>             # detalle de un run; si es un plan, sus tasks
+agents logs <id> --tail 40     # salida del worker desacoplado
+agents history --all           # historico y coste acumulado
+agents stop <id>               # detener uno vivo
+```
+
+El estado vive en `~/.agent-orchestrator/orchestrator.db`, asi que sobrevive al
+cierre de la sesion: puedes retomar cualquier run de dias anteriores.
+
+## Como resumirselo al usuario
+
+Una tabla corta y un veredicto, no un volcado de JSON:
+
+- que se esta ejecutando y desde cuando;
+- que termino, con que estado y donde esta el codigo (rama `agents/*`);
+- que fallo y por que (mira `issues` y `tests` del detalle);
+- coste acumulado si lo pregunta.
+
+Si algo esta `running` desde hace mucho, mira el log antes de opinar: puede estar
+en un bucle de correccion de tests.
+
+Si algo quedo `completed` pero sin revisar, dilo y ofrece `hybrid-review`.
