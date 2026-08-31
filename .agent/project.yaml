@@ -1,0 +1,15 @@
+version: 1
+project:
+  name: agent-orchestrator
+  profile: python
+repository:
+  provider: git
+commands:
+  install: pip install -e .
+  test: pytest
+paths:
+  source:
+  - src
+protected:
+- .env
+- .git
