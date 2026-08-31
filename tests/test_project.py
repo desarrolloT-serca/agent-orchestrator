@@ -36,6 +36,12 @@ def test_java_maven():
     assert cfg["commands"]["test"] == "mvn -B test"
 
 
+def test_java_maven_prefiere_el_wrapper():
+    root = _repo({"pom.xml": "<project/>", "mvnw": ""})
+    cmd = project.detect(root)["commands"]["test"]
+    assert "mvn " not in cmd and "mvnw" in cmd
+
+
 def test_save_load_roundtrip():
     root = _repo({"pom.xml": "<project/>"})
     project.save(root, project.detect(root))

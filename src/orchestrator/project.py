@@ -78,6 +78,11 @@ def detect(root: Path) -> dict:
             if (root / marker).exists():
                 profile, commands = p, dict(c)
                 break
+        # el wrapper fija la version del build tool que espera el proyecto: preferirlo
+        wrapper = "mvnw" if profile == "java-maven" else "gradlew" if profile == "java-gradle" else None
+        if wrapper and (root / wrapper).exists():
+            invocar = f"./{wrapper}" if os.name != "nt" else f"{wrapper}.cmd"
+            commands = {k: v.replace("mvn", invocar).replace("gradle", invocar) for k, v in commands.items()}
 
     origin = git(root, "remote", "get-url", "origin")
     sources = [d for d in SOURCE_DIRS if (root / d).is_dir()] or ["."]
