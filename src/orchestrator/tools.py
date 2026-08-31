@@ -60,14 +60,20 @@ def safe_path(root: Path, path: str) -> Path:
     return target
 
 
-def read_file(root: Path, path: str, start_line: int | None = None, end_line: int | None = None) -> str:
+def read_file(root: Path, path: str, start_line: int | None = None, end_line: int | None = None,
+             start: int | None = None, end: int | None = None) -> str:
+    # el modelo confunde start/end con start_line/end_line con cierta frecuencia
+    # (~5 de cada 20 llamadas reales medidas); aceptar el alias evita gastar una
+    # iteracion entera en el error y el reintento
+    start_line = start_line if start_line is not None else start
+    end_line = end_line if end_line is not None else end
     target = safe_path(root, path)
     if not target.is_file():
         raise ToolError(f"no existe el fichero: {path}")
     lines = target.read_text(encoding="utf-8", errors="replace").splitlines()
-    start = max(1, start_line or 1)
-    end = min(len(lines), end_line or len(lines))
-    numbered = [f"{i}\t{lines[i - 1]}" for i in range(start, end + 1)]
+    desde = max(1, start_line or 1)
+    hasta = min(len(lines), end_line or len(lines))
+    numbered = [f"{i}\t{lines[i - 1]}" for i in range(desde, hasta + 1)]
     return _truncate("\n".join(numbered)) or "(fichero vacio)"
 
 

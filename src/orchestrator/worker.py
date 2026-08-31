@@ -29,6 +29,11 @@ Reglas:
 - Ejecuta los comandos de validacion del proyecto con shell y corrige los fallos.
 - No puedes salir del repositorio, leer secretos ni hacer git push/reset --hard/clean.
 - No dejes ficheros temporales: lee la salida de los comandos, no la redirijas a un fichero.
+- Si trabajas en un worktree (dentro de un directorio como .agent-worktrees/ o
+  .bench-worktrees/), las dependencias del proyecto (node_modules y similares)
+  suelen resolverse igualmente desde el checkout principal, sin necesidad de
+  reinstalarlas ahi. Ejecuta primero el comando de validacion tal cual; instala
+  algo solo si el error confirma que de verdad falta.
 - Cuando la tarea este terminada y validada, responde SIN llamar a ninguna herramienta,
   con un resumen breve: que has cambiado, que ficheros y el resultado de los tests.
 

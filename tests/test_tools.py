@@ -54,6 +54,13 @@ def test_read_y_search():
     assert "src/" in tools.execute(root, "list_directory", {"path": "."})
 
 
+def test_read_file_acepta_start_end_como_alias():
+    root = _root()
+    con_alias = tools.execute(root, "read_file", {"path": "src/app.py", "start": 2, "end": 2})
+    con_nombre_real = tools.execute(root, "read_file", {"path": "src/app.py", "start_line": 2, "end_line": 2})
+    assert con_alias == con_nombre_real == "2\t    return 1"
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_"):

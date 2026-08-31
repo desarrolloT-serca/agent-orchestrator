@@ -37,7 +37,10 @@ def execute(run_id: int, on_event: Callable[[str, str], None] = lambda kind, tex
     except Exception as exc:  # noqa: BLE001 - el fallo se persiste, no se pierde
         traceback.print_exc()
         result = {"status": "failed", "summary": f"{exc.__class__.__name__}: {exc}"}
-        storage.save_result(run_id, result)
+        try:
+            storage.save_result(run_id, result)
+        except Exception:  # noqa: BLE001 - p.ej. disco lleno: no ocultes el fallo original con este
+            traceback.print_exc()
         return result
 
 
