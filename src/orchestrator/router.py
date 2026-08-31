@@ -46,11 +46,19 @@ def classify(task: str) -> str:
 
 
 def attempts(config: dict, model: str | None, task: str) -> tuple[tuple[str, str], ...]:
-    """Secuencia de (modelo, reasoning) a intentar."""
+    """Secuencia de (modelo, reasoning) a intentar.
+
+    El primer intento (y su repeticion) usan workers.reasoning del proyecto; la escalada
+    a Pro siempre arranca fuerte (high, o max si ya se habia arrancado en Pro) porque es
+    la ultima red de seguridad, no el sitio para heredar un reasoning bajo.
+    """
     configurado = model or config.get("workers", {}).get("default_model", FLASH)
     if configurado == "auto":
         configurado = PRO if classify(task) == "hard" else FLASH
-    return PRO_ESCALATION if configurado == PRO else ESCALATION
+    reasoning = config.get("workers", {}).get("reasoning", "high")
+    if configurado == PRO:
+        return ((PRO, reasoning), (PRO, reasoning), (PRO, "max"))
+    return ((FLASH, reasoning), (FLASH, reasoning), (PRO, "high"))
 
 
 def _nota(result: dict) -> str:

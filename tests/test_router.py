@@ -89,3 +89,10 @@ if __name__ == "__main__":
         if name.startswith("test_"):
             fn()
     print("ok")
+
+
+def test_reasoning_configurado_se_respeta():
+    low = {"workers": {"default_model": FLASH, "reasoning": "low"}}
+    assert router.attempts(low, None, "algo") == ((FLASH, "low"), (FLASH, "low"), (PRO, "high"))
+    low_pro = {"workers": {"default_model": PRO, "reasoning": "low"}}
+    assert router.attempts(low_pro, None, "algo") == ((PRO, "low"), (PRO, "low"), (PRO, "max"))
