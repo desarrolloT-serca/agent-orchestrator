@@ -1,0 +1,35 @@
+feature: informes
+
+tasks:
+
+  - id: modelo
+    description: |
+      Crea `src/informe.py` con la funcion `informe_ventas(carritos)`, donde cada
+      carrito es una lista de lineas `(precio, cantidad)`. Debe devolver un dict con
+      `num_carritos`, `total_bruto`, `total_neto` (con IVA) y `ticket_medio`,
+      todos redondeados a 2 decimales. Reutiliza las funciones de `src/carrito.py`.
+      No modifiques ningun fichero fuera de src/informe.py.
+    files:
+      - src/informe.py
+    depends_on: []
+
+  - id: formato
+    description: |
+      Crea `src/formato.py` con `formatear_euros(valor)` que devuelve el importe como
+      cadena con dos decimales, separador de miles con punto, decimales con coma y
+      sufijo " EUR" (ejemplo: 1234.5 -> "1.234,50 EUR"). Debe funcionar con negativos
+      y con cero. No modifiques ningun fichero fuera de src/formato.py.
+    files:
+      - src/formato.py
+    depends_on: []
+
+  - id: tests
+    description: |
+      Anade `tests/test_informe.py` con tests de `informe_ventas` (varios carritos y
+      lista vacia) y de `formatear_euros` (miles, decimales, negativo y cero).
+      Sigue el estilo de `tests/test_carrito.py`. No modifiques codigo de src/.
+    files:
+      - tests/**
+    depends_on:
+      - modelo
+      - formato
