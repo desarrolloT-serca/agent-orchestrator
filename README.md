@@ -229,6 +229,48 @@ agents retry 7 --model deepseek-v4-pro
 es un proceso desacoplado y SQLite hace de estado compartido: un servidor con protocolo
 propio no aporta nada hasta que exista cola y `max_parallel` (Fase 5).
 
+## Endurecimiento post-V1
+
+Una revision externa de las 8 fases encontro varios problemas reales una vez la V1 estaba
+completa. Se corrigieron:
+
+- **Payload de DeepSeek incorrecto.** `reasoning_effort` iba anidado dentro de `thinking`;
+  la API lo esperaba (y lo sigue esperando) como campo hermano. No daba error porque
+  DeepSeek ignoraba el campo de mas y aplicaba su default (`high`) — asi que `reasoning: low`
+  o `max` en `project.yaml` no tenian efecto real. Corregido y verificado contra la API.
+- **`agents run task.md` no aislaba en worktree.** Solo los planes multiworker lo hacian; una
+  tarea suelta editaba el checkout principal directamente, pudiendose mezclar con trabajo sin
+  commitear. Ahora toda ejecucion (`task`, `retry`, cada task de un `plan`) corre en su propio
+  worktree `.agent-worktrees/run-<id>`; el checkout principal no se toca nunca.
+- **`agents retry` perdia el contexto.** No conservaba `kind`/`feature`/`task_id`, asi que
+  reintentar un plan lo interpretaba como una tarea suelta (mandando el YAML crudo como texto)
+  y reintentar la task de un plan se ejecutaba contra el repo principal en vez de un worktree.
+  Corregido: el tipo se preserva; una task de plan reintentada suelta pierde la reintegracion
+  automatica (se avisa en la salida).
+- **Colision de ramas al relanzar la misma feature.** `worktree.create()` borra antes de crear:
+  relanzar un plan con el mismo nombre de feature podia borrar la rama de integracion anterior
+  junto con sus commits. Los nombres ahora incluyen el ID del run del plan.
+- **`shell` no bloqueaba lectura de secretos.** `read_file`/`edit_file` estaban protegidos por
+  `safe_path()`, pero `cat .env` o `type .env` via `shell` no. Bloqueados por patron; el
+  subprocess tambien deja de heredar variables `*_API_KEY`/`*_SECRET`/`*_TOKEN`/`*_PASSWORD`
+  del proceso del orquestador. El timeout que pide el modelo tiene techo (300s).
+- **Sin retry ante fallos de infraestructura.** Un 429/5xx o un corte de red consumia un
+  intento de escalado Flash/Pro igual que un fallo real del worker. Ahora hay un backoff corto
+  (1s/3s/8s) antes de contarlo como fallo.
+- **Bugs en `doctor` y `stop`.** El check de la base de datos era `... or True` (siempre
+  pasaba); el codigo de salida solo miraba los primeros 6 checks, asi que un `commands.test`
+  sin binario instalado no hacia fallar `agents doctor`. `stop` no comprobaba si el `pid` era
+  `None` (tasks en cola) ni si habia sido reciclado por otro proceso.
+- **Tests con fugas entre ficheros.** Varios monkeypatches (`deepseek.chat`, `worker.run`) no
+  se restauraban; bajo `pytest` (un solo proceso) un fichero contaminaba al siguiente. Anadido
+  `tests/conftest.py` con un fixture autouse que los restaura.
+- **Ownership de `plan.yaml` no verificado.** El scheduler usaba `files` para decidir
+  paralelismo, pero solo se lo decia al worker por prompt; nada comprobaba que lo respetara.
+  Ahora se compara `files_changed` contra el scope declarado y una violacion queda como
+  `SCOPE_VIOLATION` en `issues`, visible para `hybrid-review`.
+- Anadidos: CI (`pytest` en cada push/PR), `pytest` como dependencia de desarrollo, deteccion
+  de wrappers `mvnw`/`gradlew`.
+
 ## Limitaciones conocidas
 
 - La integracion queda en una rama; no hay merge ni PR automatico (fuera de alcance en V1).
@@ -238,6 +280,20 @@ propio no aporta nada hasta que exista cola y `max_parallel` (Fase 5).
   `files_changed` antes de integrar.
 - La validacion usa los comandos del `project.yaml` tal cual: si `agents init` no detecto
   `lint`/`typecheck`, no se comprueban.
+- **`shell` no es una sandbox real.** El bloqueo de secretos es por patron (heuristica, no
+  aislamiento): un comando suficientemente indirecto podria evadirlo. Aislar de verdad
+  significa un contenedor por worker, que es una pieza de infraestructura que el roadmap
+  descarta explicitamente para esta V1 (`git/agent-orchestrator/ROADMAP.md`, seccion 7).
+  Usalo sobre repos de confianza, no sobre codigo que no revisarias tu mismo.
+- **`max_parallel` es por ejecucion, no global.** Dos `agents run plan.yaml` simultaneos (dos
+  terminales) pueden sumar mas workers que el limite configurado. Un daemon con cola global lo
+  resolveria; para un desarrollador trabajando solo, no ha compensado la complejidad todavia.
+- **Reconciliacion de procesos parcial.** Si el proceso de un run desaparece sin avisar (PC
+  apagado, kill -9), el run se queda `running` en SQLite hasta que alguien lo note; `stop`
+  verifica que el pid siga siendo el worker antes de matarlo, pero nada lo detecta solo.
+- Un solo proveedor de modelos (DeepSeek), acoplado directamente en `deepseek.py`/`router.py`.
+  No se ha abstraido para un segundo proveedor porque no hay uno en uso todavia (YAGNI); si
+  llega, es el momento de extraerlo, no antes.
 
 ## Tests
 

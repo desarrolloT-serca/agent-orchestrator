@@ -113,7 +113,7 @@ El worker no se aprueba a si mismo. Cuando termine:
 
 ```bash
 git diff <base>..agents/<feature>-integration     # plan multiworker
-git -C .agent-worktrees/<nombre> diff HEAD~1      # task suelta
+git -C .agent-worktrees/run-<id> diff HEAD~1      # task suelta
 ```
 
 Aplica la skill `hybrid-review`. No des por bueno un resultado porque los tests
