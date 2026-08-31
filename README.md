@@ -50,9 +50,9 @@ agents run task.md --model deepseek-v4-pro
 
 ## Worker (Fase 2)
 
-Loop nativo de tool calling contra `deepseek-v4-flash` (`thinking.reasoning_effort` segun
-`workers.reasoning`). Herramientas: `read_file`, `list_directory`, `search_code`,
-`edit_file`, `shell`, `git_diff`.
+Loop nativo de tool calling contra `deepseek-v4-flash` (`thinking: {type: enabled}` +
+`reasoning_effort` segun `workers.reasoning`). Herramientas: `read_file`, `list_directory`,
+`search_code`, `edit_file`, `shell`, `git_diff`.
 
 Seguridad aplicada antes de cada llamada:
 
