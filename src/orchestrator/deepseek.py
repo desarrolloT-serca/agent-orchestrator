@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from datetime import datetime, timezone
 
 import httpx
@@ -11,6 +12,12 @@ DEFAULT_MODEL = "deepseek-v4-flash"
 
 # ponytail: sin streaming hasta que la UI lo necesite
 REASONING = ("low", "high", "max")
+
+# 429/5xx y caidas de red son infraestructura, no un fallo del worker: no deben
+# consumir un intento de escalado Flash/Pro. Backoff corto porque el resto del
+# budget (max_runtime_minutes) sigue corriendo mientras tanto.
+RETRY_STATUS = {429, 500, 502, 503, 504}
+RETRY_BACKOFF = (1, 3, 8)
 
 
 class DeepSeekError(RuntimeError):
@@ -25,27 +32,39 @@ def chat(
     reasoning: str = "high",
     timeout: int = 600,
 ) -> dict:
-    """Una llamada a /chat/completions. Devuelve {'message': ..., 'usage': ...}."""
+    """Una llamada a /chat/completions, con reintento corto ante fallos de infraestructura."""
+    # reasoning_effort es un campo top-level, no va dentro de "thinking"
+    # (confirmado en el ejemplo de payload de api-docs.deepseek.com/guides/thinking_mode)
     payload: dict = {
         "model": model,
         "messages": messages,
-        "thinking": {"type": "enabled", "reasoning_effort": reasoning},
+        "thinking": {"type": "enabled"},
+        "reasoning_effort": reasoning,
     }
     if tools:
         payload["tools"] = tools
-    try:
-        r = httpx.post(
-            f"{BASE_URL}/chat/completions",
-            headers={"Authorization": f"Bearer {api_key}"},
-            json=payload,
-            timeout=timeout,
-        )
-    except httpx.HTTPError as exc:
-        raise DeepSeekError(f"error de red: {exc}") from exc
-    if r.status_code != 200:
-        raise DeepSeekError(f"HTTP {r.status_code}: {r.text[:500]}")
-    data = r.json()
-    return {"message": data["choices"][0]["message"], "usage": data.get("usage", {})}
+
+    ultimo: Exception | None = None
+    for intento, espera in enumerate((*RETRY_BACKOFF, None)):
+        try:
+            r = httpx.post(
+                f"{BASE_URL}/chat/completions",
+                headers={"Authorization": f"Bearer {api_key}"},
+                json=payload,
+                timeout=timeout,
+            )
+        except httpx.HTTPError as exc:
+            ultimo = DeepSeekError(f"error de red: {exc}")
+        else:
+            if r.status_code == 200:
+                data = r.json()
+                return {"message": data["choices"][0]["message"], "usage": data.get("usage", {})}
+            if r.status_code not in RETRY_STATUS:
+                raise DeepSeekError(f"HTTP {r.status_code}: {r.text[:500]}")
+            ultimo = DeepSeekError(f"HTTP {r.status_code}: {r.text[:500]}")
+        if espera is not None:
+            time.sleep(espera)
+    raise ultimo
 
 
 # USD por 1M tokens: (cache hit, cache miss, output), off-peak y peak
