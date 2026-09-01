@@ -7,6 +7,13 @@ description: Implementa una funcionalidad delegando la programacion a workers De
 
 Tu diseñas y revisas. DeepSeek programa. Nunca al reves.
 
+Esta skill es para cuando el usuario ya esta hablando contigo (el caso normal): tu eres
+el arquitecto de esta sesion. Si en vez de eso te pide automatizar ese primer paso sin una
+conversacion en vivo (p.ej. "que el propio orquestador escriba el plan"), existe
+`agents architect "<descripcion>"` (V2, ver README seccion "Arquitecto"): invoca el CLI de
+Claude en modo no interactivo para proponer el plan, y sigue exigiendo `agents launch`
+para lanzarlo. Son dos caminos al mismo sitio, no dos herramientas distintas.
+
 ## 1. Antes de nada: ¿merece delegar?
 
 Hazlo tu mismo, sin orquestador, si la tarea es:

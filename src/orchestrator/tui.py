@@ -1,9 +1,11 @@
 """Dashboard en terminal (V2, opt-in): monitoriza y controla runs sin repetir 'agents
 status'/'logs' a mano. Requiere 'textual' (pip install 'agent-orchestrator[tui]').
 
-Solo vista + control basico (stop/retry/validar) sobre lo que ya existe en storage.py y
-runner.py -- cero logica de negocio nueva aqui. Deliberadamente NO lanza runs nuevos ni
-hace --merge/--pr de 'agents integrate': eso sigue siendo CLI explicito.
+Solo vista + control basico (stop/retry/validar/lanzar/descartar) sobre lo que ya existe
+en storage.py, runner.py y architect.py -- cero logica de negocio nueva aqui. La tecla 'n'
+pide una feature al arquitecto (CLI de Claude, ver architect.py) pero deliberadamente no
+hay chat: una linea de texto, se lanza como cualquier otro run, se ve pasar en la tabla.
+Tampoco hace --merge/--pr de 'agents integrate': eso sigue siendo CLI explicito.
 """
 
 from __future__ import annotations
@@ -14,7 +16,7 @@ from pathlib import Path
 
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
-from textual.widgets import DataTable, Footer, Header, Log, Static
+from textual.widgets import DataTable, Footer, Header, Input, Log, Static
 
 from orchestrator import project, runner, storage, worker
 
@@ -24,6 +26,53 @@ COLUMNS = ("ID", "ESTADO", "MODELO", "INICIO", "SEG", "USD", "TAREA")
 COLORS = {"completed": "green", "running": "cyan", "queued": "yellow",
          "failed": "red", "validation_failed": "red", "aborted": "red",
          "integration_conflict": "red", "stopped": "yellow"}
+
+
+def _pipeline(row: sqlite3.Row) -> str | None:
+    """Si la fila seleccionada es un run 'architect' o un plan propuesto por uno, resume
+    las 4 etapas (Arquitecto -> Workers -> Tester -> Hecho). None si no aplica: se sigue
+    mostrando el detalle normal para cualquier otra fila."""
+    if row["kind"] == "architect":
+        arquitecto = row
+        hijos_arq = storage.children(row["id"])
+        plan = hijos_arq[0] if hijos_arq else None
+    elif row["kind"] == "plan" and row["parent_id"]:
+        padre = storage.get_run(row["parent_id"])
+        if padre is None or padre["kind"] != "architect":
+            return None
+        arquitecto, plan = padre, row
+    else:
+        return None
+
+    def etapa(nombre: str, estado: str) -> str:
+        return f"[{COLORS.get(estado, 'white')}]● {nombre}: {estado}[/]"
+
+    partes = [etapa("Arquitecto", arquitecto["status"])]
+    if plan is None:
+        return " -> ".join([*partes, etapa("Workers", "-"), etapa("Tester", "-"), etapa("Hecho", "-")])
+
+    tasks = storage.children(plan["id"])
+    if not tasks:
+        workers = plan["status"]
+    elif any(t["status"] == "running" for t in tasks):
+        workers = "running"
+    elif all(t["status"] == "completed" for t in tasks):
+        workers = "completed"
+    else:
+        workers = "failed"
+    partes.append(etapa("Workers", workers))
+
+    validaciones = [json.loads(t["tests"]) for t in tasks if t["tests"]]
+    validaciones = [v for v in validaciones if v]
+    if not validaciones:
+        tester = "-"
+    elif all(all(r["ok"] for r in v.values()) for v in validaciones):
+        tester = "completed"
+    else:
+        tester = "failed"
+    partes.append(etapa("Tester", tester))
+    partes.append(etapa("Hecho", plan["status"]))
+    return " -> ".join(partes)
 
 
 def _fila(row: sqlite3.Row) -> tuple[str, ...]:
@@ -64,9 +113,11 @@ def _totales(rows: list[sqlite3.Row]) -> str:
 class Dashboard(App):
     CSS = """
     #totales { height: 1; padding: 0 1; color: $text-muted; }
+    #nueva { display: none; border: solid $accent; }
     #runs { width: 65%; }
     #panel { width: 35%; }
-    #detail { height: 40%; border: solid $accent; padding: 0 1; }
+    #pipeline { height: 3; border: solid $accent; padding: 0 1; }
+    #detail { height: 37%; border: solid $accent; padding: 0 1; }
     #logtail { height: 60%; border: solid $accent; }
     """
     BINDINGS = [
@@ -74,6 +125,9 @@ class Dashboard(App):
         ("s", "stop_selected", "Stop"),
         ("r", "retry_selected", "Retry"),
         ("i", "validate_selected", "Validar"),
+        ("n", "new_feature", "Nueva (arquitecto)"),
+        ("l", "launch_selected", "Launch"),
+        ("x", "discard_selected", "Discard"),
         ("a", "toggle_active", "Solo activos"),
     ]
 
@@ -87,9 +141,11 @@ class Dashboard(App):
     def compose(self) -> ComposeResult:
         yield Header()
         yield Static(id="totales")
+        yield Input(id="nueva", placeholder="Describe la feature (Enter envia, Esc cancela)...")
         with Horizontal():
             yield DataTable(id="runs")
             with Vertical(id="panel"):
+                yield Static(id="pipeline")
                 yield Static(id="detail")
                 yield Log(id="logtail")
         yield Footer()
@@ -99,6 +155,10 @@ class Dashboard(App):
         tabla.add_columns(*COLUMNS)
         tabla.cursor_type = "row"
         self.refresh_runs()
+        # el Input oculto (#nueva) es focusable aunque display=False y se queda con el
+        # foco por defecto al montar; sin esto ninguna tecla (flechas, s/r/i/a...) llegaba
+        # a la tabla
+        tabla.focus()
         self.set_interval(REFRESH_RUNS_SECONDS, self.refresh_runs)
         self.set_interval(REFRESH_LOG_SECONDS, self.refresh_log)
 
@@ -125,8 +185,10 @@ class Dashboard(App):
         if self.selected_id is None:
             return
         row = storage.get_run(self.selected_id)
-        if row is not None:
-            self.query_one("#detail", Static).update(_detalle(row))
+        if row is None:
+            return
+        self.query_one("#detail", Static).update(_detalle(row))
+        self.query_one("#pipeline", Static).update(_pipeline(row) or "")
 
     def refresh_log(self) -> None:
         if self.selected_id is None:
@@ -193,4 +255,50 @@ class Dashboard(App):
 
     def action_toggle_active(self) -> None:
         self.active_only = not self.active_only
+        self.refresh_runs()
+
+    def action_new_feature(self) -> None:
+        entrada = self.query_one("#nueva", Input)
+        entrada.display = True
+        entrada.focus()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        if event.input.id != "nueva":
+            return
+        descripcion = event.value.strip()
+        event.input.value = ""
+        event.input.display = False
+        self.query_one("#runs", DataTable).focus()
+        if not descripcion:
+            return
+        run_id = storage.create_run(self.root, descripcion, kind="architect")
+        runner.spawn(run_id, self.root)
+        self.selected_id = run_id
+        self.notify(f"arquitecto trabajando: run {run_id}")
+        self.refresh_runs()
+
+    def on_key(self, event) -> None:
+        entrada = self.query_one("#nueva", Input)
+        if event.key == "escape" and entrada.display:
+            entrada.value = ""
+            entrada.display = False
+            self.query_one("#runs", DataTable).focus()
+            event.stop()
+
+    def action_launch_selected(self) -> None:
+        if self.selected_id is None:
+            return
+        row = storage.get_run(self.selected_id)
+        if row is None or not runner.plan_pendiente(row):
+            self.notify("no es un plan pendiente de lanzar", severity="warning")
+            return
+        runner.spawn(self.selected_id, Path(row["project"]))
+        self.notify(f"lanzado: run {self.selected_id}")
+        self.refresh_runs()
+
+    def action_discard_selected(self) -> None:
+        if self.selected_id is None:
+            return
+        _, mensaje = runner.discard(self.selected_id)
+        self.notify(mensaje)
         self.refresh_runs()

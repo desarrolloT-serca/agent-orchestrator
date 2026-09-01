@@ -16,6 +16,8 @@ Plan completo por fases en [ROADMAP.md](ROADMAP.md).
 | `agents run <task.md>` | worker DeepSeek: explora, edita, ejecuta tests, valida y reporta |
 | `agents run <plan.yaml>` | varias tasks en paralelo, cada una en su worktree |
 | `agents run -d` | lanza en segundo plano y devuelve el ID |
+| `agents architect "<descripcion>"` | el CLI de Claude propone un plan.yaml (no lo lanza, ver abajo) |
+| `agents launch <id>` / `agents discard <id>` | confirma o descarta un plan propuesto por el arquitecto |
 | `agents status [id]` | runs del proyecto, o el detalle de uno |
 | `agents logs <id>` | log del worker desacoplado |
 | `agents stop <id>` | mata el proceso del worker |
@@ -256,13 +258,42 @@ agents dashboard
 | `s` | `agents stop` sobre el run seleccionado |
 | `r` | `agents retry` sobre el seleccionado, siempre en segundo plano |
 | `i` | revalida la rama (igual que `agents integrate` sin flags): PASS o FAIL, nunca mergea |
+| `n` | pide una feature al arquitecto (ver abajo) |
+| `l` | lanza (`agents launch`) el plan seleccionado si el arquitecto lo propuso y sigue en cola |
+| `x` | descarta (`agents discard`) un plan propuesto que no se quiere lanzar |
 | `a` | alterna ver solo runs activos / todo el historico |
 | `q` | salir |
 
-Deliberadamente **no** lanza runs nuevos ni hace `--merge`/`--pr` de `agents integrate` desde
-una tecla -- eso sigue exigiendo el comando explicito. `runner.stop()`/`runner.retry()` son la
-misma implementacion que usan `agents stop`/`agents retry`; el dashboard no duplica logica,
-solo la muestra y la dispara.
+Deliberadamente **no** hace `--merge`/`--pr` de `agents integrate` desde una tecla -- eso
+sigue exigiendo el comando explicito. `runner.stop()`/`runner.retry()`/`runner.discard()` son
+la misma implementacion que usan `agents stop`/`agents retry`/`agents discard`; el dashboard
+no duplica logica, solo la muestra y la dispara.
+
+### Arquitecto: `agents architect` (V2)
+
+Automatiza el primer paso de `hybrid-implement` -- estudiar el repo y escribir el
+`plan.yaml` -- usando el **CLI de Claude Code** (`claude -p`) como subproceso, no la API de
+Anthropic: reutiliza tu sesion ya autenticada, sin `ANTHROPIC_API_KEY`.
+
+```bash
+agents architect "añade notificaciones por email al confirmar un pedido"
+agents launch <id>      # una vez revisado el plan propuesto, lo lanza de verdad
+agents discard <id>     # o lo descarta si no convence
+```
+
+- El arquitecto **solo propone**: crea una fila `plan` hija en cola (`queued`), nunca la
+  lanza el solo. Hace falta `agents launch` (o la tecla `l` del dashboard) para que los
+  workers empiecen a trabajar de verdad -- coherente con "nunca push/lanzamiento sin
+  pedirlo" del resto del orquestador.
+- Usa `Read`/`Glob`/`Grep` solamente (`--allowedTools`, `--permission-mode dontAsk`): el
+  arquitecto no edita nada, solo lee y propone.
+- El esquema de salida (`--json-schema`) es literalmente `Plan.model_json_schema()` --
+  el mismo modelo Pydantic que ya valida un `plan.yaml` escrito a mano, no un esquema
+  duplicado a mantener aparte.
+- En el dashboard (`n`), el panel de detalle se sustituye por un resumen de 4 etapas --
+  Arquitecto → Workers → Tester → Hecho -- coloreado en vivo; "Tester" es la validacion
+  que **ya existe** (`test`/`lint`/`typecheck`/`build`), no una etapa nueva.
+- Requiere el CLI `claude` en el PATH; `agents architect` avisa claro si falta.
 
 ## Endurecimiento post-V1
 

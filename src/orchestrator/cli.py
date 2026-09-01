@@ -1,5 +1,5 @@
-"""CLI del orquestador: init | doctor | config | run | status | logs | stop | retry |
-dashboard | integrate | history."""
+"""CLI del orquestador: init | doctor | config | run | architect | launch | discard |
+status | logs | stop | retry | dashboard | integrate | history."""
 
 from __future__ import annotations
 
@@ -236,6 +236,44 @@ def _launch(run_id: int, root: Path, detach: bool) -> None:
     console.print_json(data=result)
     console.print(f"run {result.get('run_id', run_id)}")
     if result["status"] != "completed":
+        raise typer.Exit(1)
+
+
+@app.command()
+def architect(
+    description: str = typer.Argument(..., help="Describe la feature; el CLI de Claude propone un plan"),
+    detach: bool = typer.Option(False, "--detach", "-d", help="Ejecuta en segundo plano y devuelve el ID"),
+) -> None:
+    """Pide al CLI de Claude Code que estudie el repo y proponga un plan.yaml. No lo
+    lanza: revisalo y confirmalo con 'agents launch <id>' (o descartalo con 'agents discard')."""
+    root = _root()
+    if not shutil.which("claude"):
+        console.print("[red]Falta el CLI de Claude Code ('claude') en el PATH.[/]")
+        raise typer.Exit(1)
+    run_id = storage.create_run(root, description, kind="architect")
+    _launch(run_id, root, detach)
+
+
+@app.command()
+def launch(
+    run_id: int,
+    detach: bool = typer.Option(False, "--detach", "-d", help="Ejecuta en segundo plano y devuelve el ID"),
+) -> None:
+    """Lanza un plan que el arquitecto propuso y sigue esperando confirmacion."""
+    row = _row(run_id)
+    if not runner.plan_pendiente(row):
+        console.print(f"[red]El run {run_id} no es un plan pendiente de lanzar "
+                      f"(kind={row['kind']}, status={row['status']}).[/]")
+        raise typer.Exit(1)
+    _launch(run_id, Path(row["project"]), detach)
+
+
+@app.command()
+def discard(run_id: int) -> None:
+    """Descarta un plan que el arquitecto propuso y que todavia no se ha lanzado."""
+    rechazado, mensaje = runner.discard(run_id)
+    console.print(f"[{'yellow' if rechazado else 'green'}]{mensaje}[/]")
+    if rechazado:
         raise typer.Exit(1)
 
 

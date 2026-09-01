@@ -12,7 +12,7 @@ from typing import Callable
 
 import yaml
 
-from orchestrator import plan as plan_module
+from orchestrator import architect, plan as plan_module
 from orchestrator import project, router, scheduler, storage, worker, worktree
 
 
@@ -23,12 +23,17 @@ def execute(run_id: int, on_event: Callable[[str, str], None] = lambda kind, tex
         raise SystemExit(f"run {run_id} no encontrado")
     root = Path(row["project"])
     fields = {"pid": os.getpid(), "started_at": storage.now()}
-    if row["kind"] == "plan":
-        # el contenedor del plan no consume slot de worker (solo orquesta); sus tasks
-        # hijas pasan por acquire_slot y se quedan 'queued' hasta que haya hueco global
+    if row["kind"] in ("plan", "architect"):
+        # ninguno de los dos consume slot de worker DeepSeek (orquestan/proponen, no
+        # implementan): las tasks hijas de un plan si pasan por acquire_slot
         fields["status"] = "running"
     storage.update_run(run_id, **fields)
     try:
+        if row["kind"] == "architect":
+            # el arquitecto usa el CLI de Claude, no DeepSeek: sin DEEPSEEK_API_KEY tambien
+            result = architect.propose(root, row["task"], run_id, on_event=on_event)
+            storage.save_result(run_id, result)
+            return result
         config = project.resolved(root) or {}
         key = project.api_key(root)
         if not key:
@@ -131,6 +136,25 @@ def retry(run_id: int, model: str | None = None) -> int:
         task_file=row["task_file"], model=model or row["model"], limits=row["limits"],
         parent_id=run_id,
     )
+
+
+def plan_pendiente(row) -> bool:
+    """True si es un plan propuesto por el arquitecto que sigue esperando 'agents launch'."""
+    return row["kind"] == "plan" and row["status"] == "queued"
+
+
+def discard(run_id: int) -> tuple[bool, str]:
+    """Descarta un plan pendiente de lanzar. Devuelve (rechazado, mensaje), mismo formato
+    que stop(). No reutiliza stop(): ese rechaza cualquier kind=='plan' de raiz (pensado
+    para uno que ya esta corriendo como hilos); aqui no hay nada corriendo todavia."""
+    row = storage.get_run(run_id)
+    if row is None:
+        return True, f"no existe el run {run_id}"
+    if not plan_pendiente(row):
+        return True, (f"el run {run_id} no es un plan pendiente de lanzar "
+                      f"(kind={row['kind']}, status={row['status']})")
+    storage.update_run(run_id, status="stopped", finished_at=storage.now())
+    return False, f"plan {run_id} descartado"
 
 
 def spawn(run_id: int, root: Path) -> int:

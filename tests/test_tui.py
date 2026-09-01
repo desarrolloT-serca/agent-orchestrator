@@ -16,7 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 textual = pytest.importorskip("textual")
 
-from orchestrator import storage, tui  # noqa: E402
+from orchestrator import runner, storage, tui  # noqa: E402
 
 TMP = Path(tempfile.mkdtemp())
 storage.DB_PATH = TMP / "orchestrator.db"
@@ -121,6 +121,78 @@ def test_detalle_muestra_tokens_cuando_hay():
             assert "prompt 100" in texto and "cache_hit 40" in texto and "completion 20" in texto
 
     asyncio.run(cuerpo())
+
+
+def test_tecla_n_abre_el_input_y_al_enviar_crea_un_run_architect(monkeypatch):
+    root = _repo()
+    lanzados = []
+    monkeypatch.setattr(tui.runner, "spawn", lambda run_id, root_: lanzados.append(run_id) or 999)
+
+    async def cuerpo():
+        app = tui.Dashboard(root)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("n")
+            await pilot.pause()
+            entrada = app.query_one("#nueva", tui.Input)
+            assert entrada.display is True
+            entrada.value = "añade login"
+            await pilot.press("enter")
+            await pilot.pause()
+            assert entrada.display is False
+            assert len(lanzados) == 1
+            fila = storage.get_run(lanzados[0])
+            assert fila["kind"] == "architect" and "login" in fila["task"]
+
+    asyncio.run(cuerpo())
+
+
+def test_escape_cancela_el_input_sin_crear_nada():
+    root = _repo()
+
+    async def cuerpo():
+        app = tui.Dashboard(root)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("n")
+            await pilot.pause()
+            entrada = app.query_one("#nueva", tui.Input)
+            entrada.value = "algo"
+            await pilot.press("escape")
+            await pilot.pause()
+            assert entrada.display is False
+            assert storage.list_runs(root) == []
+
+    asyncio.run(cuerpo())
+
+
+def test_launch_y_discard_sobre_un_plan_propuesto(monkeypatch):
+    root = _repo()
+    arquitecto_id = storage.create_run(root, "algo", kind="architect", status="completed")
+    plan_id = storage.create_run(root, "feature: x\ntasks: []", kind="plan",
+                                 status="queued", parent_id=arquitecto_id)
+    lanzados = []
+    monkeypatch.setattr(tui.runner, "spawn", lambda run_id, root_: lanzados.append(run_id) or 999)
+
+    async def cuerpo():
+        app = tui.Dashboard(root)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            # orden por id DESC: el plan (creado despues del arquitecto) es la fila 0
+            assert app.selected_id == plan_id
+            # panel de pipeline visible para esta fila
+            assert "Arquitecto" in str(app.query_one("#pipeline").content)
+
+            await pilot.press("l")
+            await pilot.pause()
+            assert lanzados == [plan_id]
+
+    asyncio.run(cuerpo())
+
+    # discard sobre otro plan pendiente, sin pasar por la TUI (misma funcion que usa 'x')
+    otro_id = storage.create_run(root, "feature: y\ntasks: []", kind="plan", status="queued")
+    rechazado, _ = runner.discard(otro_id)
+    assert not rechazado and storage.get_run(otro_id)["status"] == "stopped"
 
 
 def test_stop_selected_no_revienta_sin_seleccion():
