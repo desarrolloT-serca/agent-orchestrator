@@ -60,7 +60,9 @@ Seguridad aplicada antes de cada llamada:
 - ninguna ruta fuera del repositorio;
 - lectura y escritura denegadas en `.env`, `*.pem`, `*.key`, claves ssh;
 - comandos bloqueados: `rm -rf`, `git push`, `git reset --hard`, `git clean`, `sudo`, `mkfs`, `curl | sh`;
-- timeout por comando.
+- timeout por comando;
+- opcional (`workers.sandbox: docker`, V2): `shell` corre en un contenedor con el worktree
+  como unico disco visible, no solo el bloqueo por patron -- ver "Limitaciones conocidas".
 
 ## Limites y validacion (Fase 3)
 
@@ -293,11 +295,17 @@ completa. Se corrigieron:
   `files_changed` antes de integrar.
 - La validacion usa los comandos del `project.yaml` tal cual: si `agents init` no detecto
   `lint`/`typecheck`, no se comprueban.
-- **`shell` no es una sandbox real.** El bloqueo de secretos es por patron (heuristica, no
-  aislamiento): un comando suficientemente indirecto podria evadirlo. Aislar de verdad
-  significa un contenedor por worker, que es una pieza de infraestructura que el roadmap
-  descarta explicitamente para esta V1 (`git/agent-orchestrator/ROADMAP.md`, seccion 7).
-  Usalo sobre repos de confianza, no sobre codigo que no revisarias tu mismo.
+- ~~`shell` no es una sandbox real~~ **aislamiento por contenedor, opt-in (V2).** Por defecto
+  sigue como en V1: bloqueo de secretos por patron (heuristica), sin aislamiento real de
+  disco. Con `workers.sandbox: docker` en `project.yaml`, el `shell` del worker corre en
+  `docker run --rm` con el worktree montado en `/work` y nada mas del disco visible -- `.env`
+  del checkout principal, `~/.ssh`, credenciales de nube, inalcanzables aunque el comando sea
+  indirecto (el ceiling que tenia la heuristica). Sin bloquear red (install/test la
+  necesitan): el aislamiento es de disco, no de trafico. `workers.sandbox_image` fija la
+  imagen (por defecto `debian:bookworm-slim`, generica y sin stack preinstalado -- para
+  Node/Python/etc. usa una imagen con el runtime ya dentro, p.ej. `node:20-slim`). Exige
+  Docker instalado (`agents doctor` lo comprueba solo si `workers.sandbox: docker` esta
+  activo); sin Docker, sigue funcionando sin sandbox salvo que lo actives.
 - ~~`max_parallel` es por ejecucion, no global~~ **corregido (V2).** `router.run_escalated`
   adquiere un slot en SQLite (`storage.acquire_slot`, `BEGIN IMMEDIATE` para que el check y la
   marca sean atomicos entre procesos) antes de invocar al worker: task suelta o task de un plan,

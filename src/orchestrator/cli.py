@@ -142,6 +142,14 @@ def doctor() -> None:
         ("Acceso DeepSeek", *_check_api(key)),
         ("ripgrep (opcional)", bool(shutil.which("rg")), shutil.which("rg") or "no instalado"),
     ]
+    sandbox_docker = (cfg or {}).get("workers", {}).get("sandbox") == "docker"
+    docker_bin = shutil.which("docker")
+    if sandbox_docker:
+        checks.append(("Docker (workers.sandbox=docker)", bool(docker_bin),
+                       docker_bin or "falta: 'shell' del worker lo necesita para aislar"))
+    else:
+        checks.append(("Docker (opcional)", bool(docker_bin),
+                       docker_bin or "no instalado; actívalo con workers.sandbox: docker"))
     try:
         with storage.connect():
             pass
@@ -149,7 +157,7 @@ def doctor() -> None:
     except Exception as exc:  # noqa: BLE001 - queremos el motivo exacto en el reporte
         checks.append(("Base de datos", False, f"{exc.__class__.__name__}: {exc}"))
 
-    optional = {"ripgrep (opcional)"}
+    optional = {"ripgrep (opcional)"} | (set() if sandbox_docker else {"Docker (opcional)"})
     for name, cmd in (cfg or {}).get("commands", {}).items():
         binary = cmd.split()[0]
         found = shutil.which(binary)

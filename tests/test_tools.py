@@ -85,3 +85,44 @@ def test_shell_no_hereda_secretos_ni_timeout_absurdo():
     assert "ausente" in salida and "no-deberia-verse" not in salida
 
     assert tools.MAX_SHELL_TIMEOUT < 999999  # el modelo no puede pedir un timeout sin techo
+
+
+def test_sandbox_docker_sigue_bloqueando_antes_de_intentarlo():
+    """Los bloqueos (comando peligroso, fichero protegido) valen tambien con sandbox activo."""
+    root = _root()
+    config = {"workers": {"sandbox": "docker"}}
+    assert "bloqueado" in tools.execute(root, "shell", {"command": "git push --force"}, config=config)
+    assert "protegido" in tools.execute(root, "shell", {"command": "cat .env"}, config=config)
+
+
+def test_sandbox_docker_sin_binario_da_error_claro():
+    """Entorno sin Docker instalado (el de CI/este mismo): mensaje explicito, no un traceback."""
+    root = _root()
+    config = {"workers": {"sandbox": "docker"}}
+    salida = tools.execute(root, "shell", {"command": "echo hola"}, config=config)
+    assert "docker" in salida.lower()
+
+
+def test_sandbox_docker_usa_la_imagen_configurada():
+    """Sin poder correr Docker de verdad aqui: verifica el comando que se construiria."""
+    root = _root()
+    vistos = {}
+
+    def _fake_run(args, **kwargs):
+        vistos["args"] = args
+        raise FileNotFoundError("docker")
+
+    import subprocess as sp
+    original = sp.run
+    sp.run = _fake_run
+    try:
+        tools._shell_docker(root, "npm test", 60, {"workers": {"sandbox_image": "node:20-slim"}})
+    except tools.ToolError:
+        pass
+    finally:
+        sp.run = original
+
+    assert vistos["args"][:3] == ["docker", "run", "--rm"]
+    assert f"{root.resolve()}:/work" in vistos["args"]
+    assert "node:20-slim" in vistos["args"]
+    assert "npm test" in " ".join(vistos["args"])

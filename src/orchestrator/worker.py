@@ -130,7 +130,7 @@ def run(
             except json.JSONDecodeError as exc:
                 args, output = {}, f"ERROR: argumentos JSON invalidos: {exc}"
             else:
-                output = tools.execute(root, name, args)
+                output = tools.execute(root, name, args, config=config)
             tool_calls += 1
             if output.startswith("ERROR:"):
                 tool_errors += 1

@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import os
 import re
+import shlex
 import shutil
 import subprocess
 from pathlib import Path
 
 MAX_OUTPUT = 20_000  # caracteres devueltos al modelo
 MAX_SHELL_TIMEOUT = 300  # el modelo elige el timeout del tool call; esto le pone techo
+DEFAULT_SANDBOX_IMAGE = "debian:bookworm-slim"  # generico; el proyecto puede fijar el suyo
 
 # ficheros que el worker nunca puede leer ni escribir
 SECRET_FILES = re.compile(r"(^|/)\.env|\.(pem|key|p12|pfx)$|(^|/)id_(rsa|ed25519)$", re.I)
@@ -133,13 +135,40 @@ def edit_file(root: Path, path: str, new_string: str, old_string: str = "") -> s
     return f"editado {path}"
 
 
-def shell(root: Path, command: str, timeout: int = 180) -> str:
+def _shell_docker(root: Path, command: str, timeout: int, config: dict) -> str:
+    """Aisla de verdad (V2): el comando corre en un contenedor con el worktree montado en
+    /work y nada mas del disco visible -- .env del checkout principal, ~/.ssh, credenciales
+    de nube, todo eso deja de ser alcanzable ni con un comando indirecto (el ceiling de
+    SECRET_IN_SHELL que el README documentaba). Sin red bloqueada: install/test la necesitan.
+
+    'timeout' interno via coreutils (esta en la imagen): un docker run --rm cerrado desde
+    fuera no garantiza matar el proceso de dentro, asi que el propio contenedor se corta solo.
+    """
+    image = (config or {}).get("workers", {}).get("sandbox_image") or DEFAULT_SANDBOX_IMAGE
+    interior = f"timeout {timeout}s sh -c {shlex.quote(command)}"
+    args = ["docker", "run", "--rm", "-v", f"{root.resolve()}:/work", "-w", "/work",
+           image, "sh", "-c", interior]
+    try:
+        r = subprocess.run(args, capture_output=True, text=True, timeout=timeout + 15,
+                           encoding="utf-8", errors="replace")
+    except subprocess.TimeoutExpired:
+        raise ToolError(f"timeout de {timeout}s (docker no respondio): {command}")
+    except FileNotFoundError:
+        raise ToolError("workers.sandbox: docker esta activado pero 'docker' no esta en el PATH")
+    if r.returncode == 124:  # codigo de salida de 'timeout' cuando mata el proceso
+        raise ToolError(f"timeout de {timeout}s: {command}")
+    return _truncate(f"exit={r.returncode}\n{r.stdout}\n{r.stderr}".strip())
+
+
+def shell(root: Path, command: str, timeout: int = 180, config: dict | None = None) -> str:
     for blocked in BLOCKED_COMMANDS:
         if re.search(blocked, command, re.I):
             raise ToolError(f"comando bloqueado por politica de seguridad: {command}")
     if SECRET_IN_SHELL.search(command):
         raise ToolError("comando bloqueado: hace referencia a un fichero protegido (.env, claves...)")
     timeout = min(timeout, MAX_SHELL_TIMEOUT)
+    if (config or {}).get("workers", {}).get("sandbox") == "docker":
+        return _shell_docker(root, command, timeout, config)
     env = {k: v for k, v in os.environ.items() if not ENV_SECRETO.search(k)}
     try:
         r = subprocess.run(command, shell=True, cwd=root, capture_output=True, text=True,
@@ -195,11 +224,13 @@ SCHEMAS = [
 ]
 
 
-def execute(root: Path, name: str, arguments: dict) -> str:
+def execute(root: Path, name: str, arguments: dict, config: dict | None = None) -> str:
     fn = DISPATCH.get(name)
     if fn is None:
         return f"ERROR: herramienta desconocida '{name}'"
     try:
+        if name == "shell":
+            return fn(root, config=config, **arguments)
         return fn(root, **arguments)
     except ToolError as exc:
         return f"ERROR: {exc}"
