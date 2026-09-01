@@ -11,8 +11,18 @@ Esta skill es para cuando el usuario ya esta hablando contigo (el caso normal): 
 el arquitecto de esta sesion. Si en vez de eso te pide automatizar ese primer paso sin una
 conversacion en vivo (p.ej. "que el propio orquestador escriba el plan"), existe
 `agents architect "<descripcion>"` (V2, ver README seccion "Arquitecto"): invoca el CLI de
-Claude en modo no interactivo para proponer el plan, y sigue exigiendo `agents launch`
-para lanzarlo. Son dos caminos al mismo sitio, no dos herramientas distintas.
+Claude en modo no interactivo para proponer el plan. Son dos caminos al mismo sitio, no
+dos herramientas distintas — pero **el arquitecto automatizado tampoco se aprueba a si
+mismo**: antes de `agents launch`, lee el plan.yaml que propuso (`agents status <id>`) con
+el mismo criterio que si lo hubieras escrito tu. No hubo conversacion contigo de por medio,
+asi que puede haber trasladado mal un requisito o partido mal las tasks.
+
+```bash
+agents architect "añade notificaciones por email al confirmar un pedido"
+agents status <id>      # lee el plan.yaml propuesto antes de nada
+agents launch <id>      # confirmado -> lanza a los workers de verdad
+agents discard <id>     # o descartalo si no convence y reformula la descripcion
+```
 
 ## 1. Antes de nada: ¿merece delegar?
 
@@ -129,6 +139,10 @@ agents stop <id>               # cortarlo
 
 Con `-d` el worker sobrevive al cierre de la sesion. No te quedes bloqueado
 esperando: informa al usuario del ID y consulta el estado despues.
+
+Si el usuario quiere seguir varios runs en paralelo el mismo, sin que tu repitas
+`agents status`/`logs`, sugierele `agents dashboard` (opt-in, `pip install -e ".[tui]"`):
+tabla en vivo, log en streaming, y stop/retry/validar por teclado.
 
 Estados: `completed`, `validation_failed` (los tests del proyecto fallaron),
 `aborted` (limite de iteraciones/coste/tiempo), `failed`, `integration_conflict`.
