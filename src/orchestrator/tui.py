@@ -91,13 +91,21 @@ class Dashboard(App):
         self.set_interval(REFRESH_LOG_SECONDS, self.refresh_log)
 
     def refresh_runs(self) -> None:
-        rows = storage.list_runs(self.root, limit=200, active_only=self.active_only)
+        # clear() resetea el cursor a la fila 0: sin restaurarlo, cada refresco periodico
+        # (cada REFRESH_RUNS_SECONDS) te devolvia arriba en mitad de navegar con las flechas
         tabla = self.query_one("#runs", DataTable)
+        previo = self.selected_id
+        rows = storage.list_runs(self.root, limit=200, active_only=self.active_only)
         tabla.clear()
         for row in rows:
             tabla.add_row(*_fila(row), key=str(row["id"]))
-        if self.selected_id is None and rows:
+        if not rows:
+            self.selected_id = None
+        elif previo is not None and previo in {r["id"] for r in rows}:
+            tabla.move_cursor(row=tabla.get_row_index(str(previo)), animate=False)
+        else:
             self.selected_id = rows[0]["id"]
+            tabla.move_cursor(row=0, animate=False)
         self.refresh_detail()
 
     def refresh_detail(self) -> None:
@@ -119,8 +127,14 @@ class Dashboard(App):
             self.query_one("#logtail", Log).write(nuevo)
             self._log_offset = len(contenido)
 
-    def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
-        self.selected_id = int(event.row_key.value)
+    def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
+        # RowHighlighted: dispara con las flechas, no hace falta pulsar Enter para "elegir"
+        if event.row_key.value is None:
+            return
+        nuevo_id = int(event.row_key.value)
+        if nuevo_id == self.selected_id:
+            return
+        self.selected_id = nuevo_id
         self._log_offset = 0
         self.query_one("#logtail", Log).clear()
         self.refresh_detail()

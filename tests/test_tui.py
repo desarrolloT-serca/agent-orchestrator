@@ -65,6 +65,31 @@ def test_binding_a_alterna_solo_activos():
     asyncio.run(cuerpo())
 
 
+def test_flechas_navegan_y_el_refresco_periodico_no_te_devuelve_arriba():
+    """Bug real reportado: cada refresco (clear()+add_row) reseteaba el cursor a la fila 0,
+    asi que bajar con las flechas 'no dejaba avanzar' -- el siguiente tick te devolvia arriba."""
+    root = _repo()
+    for i in range(3):
+        storage.create_run(root, f"tarea {i}", status="completed", duration_seconds=i)
+
+    async def cuerpo():
+        app = tui.Dashboard(root)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            primero = app.selected_id
+            await pilot.press("down")
+            await pilot.pause()
+            assert app.selected_id != primero, "la flecha abajo deberia cambiar la seleccion"
+            tras_bajar = app.selected_id
+
+            app.refresh_runs()  # simula el tick del set_interval
+            await pilot.pause()
+            assert app.selected_id == tras_bajar, "el refresco periodico no deberia resetear el cursor"
+            assert app.query_one("#runs").cursor_row != 0
+
+    asyncio.run(cuerpo())
+
+
 def test_stop_selected_no_revienta_sin_seleccion():
     root = _repo()
 
