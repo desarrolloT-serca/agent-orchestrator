@@ -235,6 +235,7 @@ def status(
     limit: int = typer.Option(10, "--limit"),
 ) -> None:
     """Muestra el estado de los runs."""
+    storage.reconcile(_root())  # detecta runs cuyo proceso desaparecio sin avisar
     if run_id is not None:
         row = _row(run_id)
         console.print_json(data=_detail(row))
@@ -279,18 +280,15 @@ def stop(run_id: int) -> None:
         raise typer.Exit(1)
     if not row["pid"]:
         console.print(f"[yellow]El run {run_id} no tiene un proceso propio todavia (sigue en cola).[/]")
+    elif not storage.pid_es_worker(row["pid"]):
+        console.print(f"[yellow]El pid {row['pid']} ya no es el worker (terminado, reutilizado por otro "
+                      "proceso, o desaparecio); no se toca.[/]")
     else:
         try:
             proc = psutil.Process(row["pid"])
-            # el pid puede haberse reciclado para otro programa: solo lo matamos si es "nuestro"
-            es_nuestro = any("orchestrator.runner" in a for a in proc.cmdline())
-            if not es_nuestro:
-                console.print(f"[yellow]El pid {row['pid']} ya no es el worker (reutilizado por otro "
-                              "proceso); no se toca.[/]")
-            else:
-                for child in proc.children(recursive=True):
-                    child.terminate()
-                proc.terminate()
+            for child in proc.children(recursive=True):
+                child.terminate()
+            proc.terminate()
         except psutil.Error as exc:
             console.print(f"[yellow]No se pudo matar el pid {row['pid']}: {exc}[/]")
     storage.update_run(run_id, status="stopped", finished_at=storage.now())

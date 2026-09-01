@@ -291,9 +291,13 @@ completa. Se corrigieron:
   da igual cuantos `agents run` esten activos en terminales distintas, nunca hay mas de
   `workers.max_parallel` workers `running` a la vez para el mismo proyecto. El que se pasa del
   limite queda `queued` hasta que se libera un hueco; `agents status` lo refleja en vivo.
-- **Reconciliacion de procesos parcial.** Si el proceso de un run desaparece sin avisar (PC
-  apagado, kill -9), el run se queda `running` en SQLite hasta que alguien lo note; `stop`
-  verifica que el pid siga siendo el worker antes de matarlo, pero nada lo detecta solo.
+- ~~Reconciliacion de procesos parcial~~ **corregido (V2).** `storage.reconcile()` marca
+  `failed` (con resumen `WORKER_HUERFANO`) los runs `queued`/`running` cuyo pid ya no
+  corresponde a un worker vivo (proceso muerto sin avisar, o pid reciclado). Se ejecuta al
+  ver `agents status`, y tambien dentro de `acquire_slot` antes de contar workers activos:
+  si no, un proceso muerto sin avisar dejaria su fila `running` para siempre y la cola
+  global del `max_parallel` se quedaria esperando un hueco que nunca se libera.
+  `stop` reusa el mismo check (`storage.pid_es_worker`).
 - Un solo proveedor de modelos (DeepSeek), acoplado directamente en `deepseek.py`/`router.py`.
   No se ha abstraido para un segundo proveedor porque no hay uno en uso todavia (YAGNI); si
   llega, es el momento de extraerlo, no antes.

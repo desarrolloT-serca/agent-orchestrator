@@ -128,13 +128,62 @@ def save_result(run_id: int, result: dict) -> None:
     )
 
 
+def pid_es_worker(pid: int) -> bool:
+    """True si el pid sigue vivo y pinta a proceso propio: el subproceso 'python -m
+    orchestrator.runner' que lanza --detach, o el 'agents run' en foreground (mismo pid
+    que el run). Heuristica por cmdline, no aislamiento real (ver 'shell no es sandbox
+    real' en el README) -- pero el sesgo importa: un falso negativo aqui marcaria 'failed'
+    un run que sigue vivo de verdad, asi que ante la duda se asume que es nuestro.
+    """
+    import psutil
+
+    try:
+        cmdline = " ".join(psutil.Process(pid).cmdline()).lower()
+    except psutil.Error:
+        return False
+    return "orchestrator" in cmdline or "agents" in cmdline
+
+
+def _reconcile(conn: sqlite3.Connection, project: str) -> list[int]:
+    """Marca 'failed' los runs activos de este proyecto cuyo pid ya no es un worker vivo.
+
+    Usa una transaccion ya abierta por el llamante (acquire_slot la reusa para que el conteo
+    que viene despues no cuente huerfanos). Solo mira filas con pid propio: las tasks de un
+    plan corren como hilos (pid NULL), a esas no hay proceso que comprobar aqui.
+    """
+    huerfanos = []
+    activos = conn.execute(
+        f"SELECT id, pid FROM runs WHERE project = ? AND status IN ({', '.join('?' * len(ACTIVE))}) "
+        "AND pid IS NOT NULL",
+        (project, *ACTIVE),
+    ).fetchall()
+    for row in activos:
+        if not pid_es_worker(row["pid"]):
+            huerfanos.append(row["id"])
+            conn.execute(
+                "UPDATE runs SET status = 'failed', finished_at = ?, summary = ? WHERE id = ?",
+                (now(), f"WORKER_HUERFANO: el proceso (pid {row['pid']}) desaparecio sin terminar "
+                        "el run (PC apagado, kill -9, o el pid fue reciclado)", row["id"]),
+            )
+    return huerfanos
+
+
+def reconcile(project: Path) -> list[int]:
+    """Uso independiente (p.ej. 'agents status'): abre y cierra su propia transaccion."""
+    with connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        return _reconcile(conn, str(project))
+
+
 def acquire_slot(run_id: int, max_parallel: int, poll_seconds: float = 2.0,
                  on_event: Callable[[str, str], None] = lambda kind, text: None) -> None:
     """Bloquea hasta que haya hueco global para este proyecto y marca la fila 'running'.
 
     Cola compartida entre procesos via SQLite: sin daemon, BEGIN IMMEDIATE hace que el
     check (cuantos 'running' hay ya) y la marca sean atomicos frente a otros procesos que
-    llamen a esto a la vez para el mismo proyecto.
+    llamen a esto a la vez para el mismo proyecto. Antes de contar, reconcilia huerfanos:
+    si no, un proceso muerto sin avisar dejaria su fila 'running' para siempre y la cola
+    global se quedaria bloqueada esperando un hueco que nunca se libera.
     """
     avisado = False
     while True:
@@ -143,6 +192,7 @@ def acquire_slot(run_id: int, max_parallel: int, poll_seconds: float = 2.0,
             row = conn.execute("SELECT project FROM runs WHERE id = ?", (run_id,)).fetchone()
             if row is None:
                 return  # run borrado o inexistente: nada que esperar
+            _reconcile(conn, row["project"])
             activos = conn.execute(
                 "SELECT COUNT(*) FROM runs WHERE project = ? AND status = 'running' "
                 "AND kind IN ('task', 'retry') AND id != ?",

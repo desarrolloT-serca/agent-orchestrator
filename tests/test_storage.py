@@ -77,6 +77,44 @@ def test_fallo_persistido():
     assert "DEEPSEEK_API_KEY" in storage.get_run(run_id)["summary"]
 
 
+def _pid_muerto() -> int:
+    """Un pid que existio y ya no: se espera a que el proceso termine antes de devolverlo."""
+    proc = subprocess.Popen([sys.executable, "-c", "pass"])
+    proc.wait()
+    return proc.pid
+
+
+def test_reconcile_marca_huerfano_el_pid_muerto():
+    root = Path(tempfile.mkdtemp()).resolve()
+    run_id = storage.create_run(root, "algo", status="running", pid=_pid_muerto())
+
+    assert storage.reconcile(root) == [run_id]
+    row = storage.get_run(run_id)
+    assert row["status"] == "failed" and "WORKER_HUERFANO" in row["summary"]
+
+
+def test_reconcile_no_toca_un_worker_vivo():
+    root = Path(tempfile.mkdtemp()).resolve()
+    proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(5)", "orchestrator.runner"])
+    try:
+        run_id = storage.create_run(root, "algo", status="running", pid=proc.pid)
+        assert storage.reconcile(root) == []
+        assert storage.get_run(run_id)["status"] == "running"
+    finally:
+        proc.terminate()
+        proc.wait()
+
+
+def test_acquire_slot_no_se_bloquea_por_un_huerfano():
+    """El slot ocupado por un proceso muerto sin avisar (PC apagado, kill -9) se libera solo."""
+    root = Path(tempfile.mkdtemp()).resolve()
+    storage.create_run(root, "viejo", status="running", pid=_pid_muerto())
+    run_id = storage.create_run(root, "nuevo")
+
+    storage.acquire_slot(run_id, max_parallel=1, poll_seconds=0.05)
+    assert storage.get_run(run_id)["status"] == "running"
+
+
 def test_acquire_slot_limita_concurrencia_global():
     """Cola global (fase V2): N tasks del mismo proyecto, max_parallel=2, nunca >2 'running' a la vez."""
     root = Path(tempfile.mkdtemp()).resolve()
