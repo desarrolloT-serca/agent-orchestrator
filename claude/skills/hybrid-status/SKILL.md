@@ -18,6 +18,10 @@ agents stop <id>               # detener uno vivo
 El estado vive en `~/.agent-orchestrator/orchestrator.db`, asi que sobrevive al
 cierre de la sesion: puedes retomar cualquier run de dias anteriores.
 
+Si el usuario tiene varios runs en paralelo y quiere seguirlos en vivo en vez de que tu
+repitas `agents status`/`logs` cada poco, sugierele `agents dashboard` (requiere
+`pip install -e ".[tui]"`): tabla en vivo, log en streaming y stop/retry/validar por teclado.
+
 ## Como resumirselo al usuario
 
 Una tabla corta y un veredicto, no un volcado de JSON:

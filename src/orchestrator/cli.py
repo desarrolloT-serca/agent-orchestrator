@@ -1,5 +1,5 @@
 """CLI del orquestador: init | doctor | config | run | status | logs | stop | retry |
-integrate | history."""
+dashboard | integrate | history."""
 
 from __future__ import annotations
 
@@ -275,34 +275,10 @@ def logs(run_id: int, tail: int = typer.Option(50, "--tail", help="Ultimas linea
 @app.command()
 def stop(run_id: int) -> None:
     """Detiene un run en ejecucion."""
-    import psutil
-
-    row = _row(run_id)
-    if row["status"] not in storage.ACTIVE:
-        console.print(f"[yellow]El run {run_id} ya no esta activo ({row['status']}).[/]")
+    rechazado, mensaje = runner.stop(run_id)
+    console.print(f"[{'yellow' if rechazado else 'green'}]{mensaje}[/]")
+    if rechazado:
         raise typer.Exit(1)
-    if row["kind"] == "plan" or (row["status"] == "running" and not row["pid"]):
-        # un plan, o una de sus tasks: corren como hilos dentro del proceso que lanzo el plan,
-        # no como proceso propio. No hay nada que matar aqui, y marcarlo "stopped" mentiria:
-        # el worker seguiria trabajando (y gastando DeepSeek) mientras el estado dice detenido.
-        console.print("[yellow]Es un plan (o una de sus tasks): corren como hilos del proceso que lo "
-                      "lanzo. Mata ese proceso (o su terminal) para detenerlas de verdad.[/]")
-        raise typer.Exit(1)
-    if not row["pid"]:
-        console.print(f"[yellow]El run {run_id} no tiene un proceso propio todavia (sigue en cola).[/]")
-    elif not storage.pid_es_worker(row["pid"]):
-        console.print(f"[yellow]El pid {row['pid']} ya no es el worker (terminado, reutilizado por otro "
-                      "proceso, o desaparecio); no se toca.[/]")
-    else:
-        try:
-            proc = psutil.Process(row["pid"])
-            for child in proc.children(recursive=True):
-                child.terminate()
-            proc.terminate()
-        except psutil.Error as exc:
-            console.print(f"[yellow]No se pudo matar el pid {row['pid']}: {exc}[/]")
-    storage.update_run(run_id, status="stopped", finished_at=storage.now())
-    console.print(f"[green]Run {run_id} detenido.[/]")
 
 
 @app.command()
@@ -313,24 +289,23 @@ def retry(
 ) -> None:
     """Relanza un run anterior, opcionalmente con otro modelo."""
     row = _row(run_id)
-    root = Path(row["project"])
-    new_id = storage.create_run(
-        root,
-        row["task"],
-        kind=row["kind"] or "task",
-        feature=row["feature"],
-        task_id=row["task_id"],
-        project_name=row["project_name"],
-        task_file=row["task_file"],
-        model=model or row["model"],
-        limits=row["limits"],
-        parent_id=run_id,
-    )
+    new_id = runner.retry(run_id, model)
     console.print(f"[green]Reintento del run {run_id} -> run {new_id}[/]")
     if row["task_id"] and row["kind"] != "plan":
         console.print("[yellow]Nota:[/] era una task de un plan; el reintento va suelto en su propio "
                       "worktree, sin los commits de sus dependencias ni reintegracion automatica.")
-    _launch(new_id, root, detach)
+    _launch(new_id, Path(row["project"]), detach)
+
+
+@app.command()
+def dashboard() -> None:
+    """Panel en vivo: runs, logs y control basico (stop/retry/validar) sin salir de la terminal."""
+    try:
+        from orchestrator.tui import Dashboard
+    except ImportError:
+        console.print("[red]Falta 'textual'. Instala con: pip install 'agent-orchestrator[tui]'[/]")
+        raise typer.Exit(1)
+    Dashboard(_root()).run()
 
 
 @app.command()

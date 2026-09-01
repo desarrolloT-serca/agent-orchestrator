@@ -78,6 +78,61 @@ def _execute_task(root: Path, row, run_id: int, config: dict, key: str,
     return result
 
 
+def stop(run_id: int) -> tuple[bool, str]:
+    """Intenta detener un run. Devuelve (rechazado, mensaje).
+
+    rechazado=True: no se ha tocado nada (ya no esta activo, o es un plan/task-de-plan que
+    corre como hilo del proceso que lo lanzo -- no hay proceso propio que matar).
+    rechazado=False: se ha marcado 'stopped' (con o sin proceso real que matar; ver mensaje).
+
+    Compartida por 'agents stop' y el dashboard: una sola implementacion de "que runs se
+    pueden parar y como", no una copia en cada sitio que la invoca.
+    """
+    import psutil
+
+    row = storage.get_run(run_id)
+    if row is None:
+        return True, f"no existe el run {run_id}"
+    if row["status"] not in storage.ACTIVE:
+        return True, f"el run {run_id} ya no esta activo ({row['status']})"
+    if row["kind"] == "plan" or (row["status"] == "running" and not row["pid"]):
+        # un plan, o una de sus tasks: corren como hilos dentro del proceso que lanzo el plan,
+        # no como proceso propio. No hay nada que matar aqui, y marcarlo "stopped" mentiria:
+        # el worker seguiria trabajando (y gastando DeepSeek) mientras el estado dice detenido.
+        return True, ("es un plan (o una de sus tasks): corren como hilos del proceso que lo "
+                      "lanzo. Mata ese proceso (o su terminal) para detenerlas de verdad.")
+    if not row["pid"]:
+        detalle = "no tenia un proceso propio todavia (sigue en cola)"
+    elif not storage.pid_es_worker(row["pid"]):
+        detalle = f"el pid {row['pid']} ya no es el worker (terminado, reutilizado, o desaparecio)"
+    else:
+        try:
+            proc = psutil.Process(row["pid"])
+            for child in proc.children(recursive=True):
+                child.terminate()
+            proc.terminate()
+            detalle = f"pid {row['pid']} detenido"
+        except psutil.Error as exc:
+            detalle = f"no se pudo matar el pid {row['pid']}: {exc}"
+    storage.update_run(run_id, status="stopped", finished_at=storage.now())
+    return False, f"run {run_id} marcado 'stopped' ({detalle})"
+
+
+def retry(run_id: int, model: str | None = None) -> int:
+    """Crea (sin lanzar) el run que reintenta run_id: mismo tipo, feature/task_id y limites.
+
+    Compartida por 'agents retry' y el dashboard. Lanzarlo (spawn/foreground) es cosa del
+    llamante: aqui solo se clona el run.
+    """
+    row = storage.get_run(run_id)
+    return storage.create_run(
+        Path(row["project"]), row["task"], kind=row["kind"] or "task",
+        feature=row["feature"], task_id=row["task_id"], project_name=row["project_name"],
+        task_file=row["task_file"], model=model or row["model"], limits=row["limits"],
+        parent_id=run_id,
+    )
+
+
 def spawn(run_id: int, root: Path) -> int:
     """Lanza el run en un proceso independiente de esta sesion. Devuelve el pid."""
     log = storage.log_path(run_id).open("a", encoding="utf-8", buffering=1)

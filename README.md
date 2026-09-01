@@ -20,6 +20,7 @@ Plan completo por fases en [ROADMAP.md](ROADMAP.md).
 | `agents logs <id>` | log del worker desacoplado |
 | `agents stop <id>` | mata el proceso del worker |
 | `agents retry <id> [--model deepseek-v4-pro]` | relanza una tarea |
+| `agents dashboard` | panel en vivo: runs, logs y stop/retry/validar sin salir de la terminal (opt-in, ver abajo) |
 | `agents integrate <id> [--merge] [--pr] [--dry-run]` | revalida la rama y, si se pide, la mergea y/o abre PR |
 | `agents history [--all]` | historico con coste acumulado |
 | `agents metrics [--all]` | Flash vs Pro: first-pass rate, reintentos, duracion, coste |
@@ -236,6 +237,32 @@ agents retry 7 --model deepseek-v4-pro
 **Sin daemon residente.** El roadmap preveia `agents daemon start/stop`, pero cada run ya
 es un proceso desacoplado y SQLite hace de estado compartido: un servidor con protocolo
 propio no aporta nada hasta que exista cola y `max_parallel` (Fase 5).
+
+## Dashboard (V2)
+
+Con la cola global y `agents run -d` como flujo normal, seguir varios runs en paralelo a
+base de repetir `agents status`/`logs` se queda corto. `agents dashboard` es una TUI (panel
+en la propia terminal, sin servidor ni navegador -- el roadmap descarto un dashboard *web*,
+no esto) con la tabla de runs en vivo, detalle + log en streaming del seleccionado, y control
+basico por teclado:
+
+```bash
+pip install -e ".[tui]"    # opt-in: no se instala con el paquete base
+agents dashboard
+```
+
+| Tecla | Que hace |
+| --- | --- |
+| `s` | `agents stop` sobre el run seleccionado |
+| `r` | `agents retry` sobre el seleccionado, siempre en segundo plano |
+| `i` | revalida la rama (igual que `agents integrate` sin flags): PASS o FAIL, nunca mergea |
+| `a` | alterna ver solo runs activos / todo el historico |
+| `q` | salir |
+
+Deliberadamente **no** lanza runs nuevos ni hace `--merge`/`--pr` de `agents integrate` desde
+una tecla -- eso sigue exigiendo el comando explicito. `runner.stop()`/`runner.retry()` son la
+misma implementacion que usan `agents stop`/`agents retry`; el dashboard no duplica logica,
+solo la muestra y la dispara.
 
 ## Endurecimiento post-V1
 
