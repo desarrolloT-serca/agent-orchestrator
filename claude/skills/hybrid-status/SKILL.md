@@ -12,6 +12,7 @@ agents status                  # runs del proyecto actual
 agents status <id>             # detalle de un run; si es un plan, sus tasks
 agents logs <id> --tail 40     # salida del worker desacoplado
 agents history --all           # historico y coste acumulado
+agents metrics --all           # Flash vs Pro: first-pass rate, reintentos, coste
 agents stop <id>               # detener uno vivo
 ```
 
@@ -35,3 +36,9 @@ Si algo esta `running` desde hace mucho, mira el log antes de opinar: puede esta
 en un bucle de correccion de tests.
 
 Si algo quedo `completed` pero sin revisar, dilo y ofrece `hybrid-review`.
+
+Si hay un run `kind: plan` en `queued` con `parent_id` apuntando a un `kind: architect`
+(`agents status <id>` lo muestra), es un plan propuesto que sigue esperando confirmacion
+-- dilo explicitamente y ofrece `agents launch <id>` (revisandolo tu primero, ver
+`hybrid-implement`) o `agents discard <id>`. No lo cuentes como "en cola" sin mas: a
+diferencia de una task esperando hueco en la cola global, este no arrancara solo nunca.
