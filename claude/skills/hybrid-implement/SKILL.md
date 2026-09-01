@@ -167,10 +167,18 @@ Tu decides, no lo deduzcas de memoria:
 ## 8. Cierre
 
 La rama `agents/<feature>-integration` queda lista pero **no se mergea sola**.
-Enseña el diff al usuario y deja que decida. Si te lo pide:
+Enseña el diff al usuario y deja que decida.
+
+Si te lo pide, usa `agents integrate` en vez de `git merge` a mano: revalida la rama
+(vuelve a correr `test`/`lint`/`typecheck`/`build` en su worktree, no se fia solo del
+resultado que guardo el worker) antes de tocar nada.
 
 ```bash
-git merge --no-ff agents/<feature>-integration
+agents integrate <id>            # solo valida, ensena si esta listo; no toca nada
+agents integrate <id> --merge    # + git merge --no-ff a la rama que tengas activa
+agents integrate <id> --pr       # + git push y gh pr create
 ```
 
-Nunca hagas push ni abras PR sin que el usuario lo pida.
+`--pr` hace push de la rama al remoto: es una accion visible fuera de tu maquina, igual de
+"pedir permiso primero" que un `git push` cualquiera. Nunca lances `--pr` (ni `--merge`) porque
+si, solo cuando el usuario ha dicho explicitamente que quiere mergear o abrir el PR.

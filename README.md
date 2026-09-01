@@ -20,6 +20,7 @@ Plan completo por fases en [ROADMAP.md](ROADMAP.md).
 | `agents logs <id>` | log del worker desacoplado |
 | `agents stop <id>` | mata el proceso del worker |
 | `agents retry <id> [--model deepseek-v4-pro]` | relanza una tarea |
+| `agents integrate <id> [--merge] [--pr] [--dry-run]` | revalida la rama y, si se pide, la mergea y/o abre PR |
 | `agents history [--all]` | historico con coste acumulado |
 | `agents metrics [--all]` | Flash vs Pro: first-pass rate, reintentos, duracion, coste |
 | `agents skills` | instala las skills en `~/.claude/skills` |
@@ -278,7 +279,14 @@ completa. Se corrigieron:
 
 ## Limitaciones conocidas
 
-- La integracion queda en una rama; no hay merge ni PR automatico (fuera de alcance en V1).
+- ~~La integracion queda en una rama; no hay merge ni PR automatico~~ **`agents integrate` (V2).**
+  Bajo demanda, nunca solo: revalida la rama (recorre `commands.test/lint/typecheck/build` en
+  su worktree, no confia solo en el resultado guardado) y, si se pide con `--merge` y/o `--pr`,
+  la mergea local (`--no-ff`) y/o le hace push + `gh pr create`. Exige `status == completed`
+  (nunca `integration_conflict`) y el checkout principal limpio (cambios trackeados sin
+  commitear bloquean el merge; lo sin trackear, como un `.agent/` recien creado, no). Sin
+  flags, solo valida y dice si esta listo -- ni Claude ni el CLI mergean o abren PR sin que
+  se lo pidan explicitamente (ver `hybrid-implement`, paso 8).
 - Cada worktree es un checkout limpio: si el proyecto necesita `node_modules` o similar, hay
   que instalar dependencias en el (el worker puede hacerlo con `commands.install`).
 - El worker puede dejar algun fichero temporal y `git add -A` lo commitea: revisa

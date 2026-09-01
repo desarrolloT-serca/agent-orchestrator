@@ -1,9 +1,11 @@
-"""CLI del orquestador: init | doctor | config | run | status | logs | stop | retry | history."""
+"""CLI del orquestador: init | doctor | config | run | status | logs | stop | retry |
+integrate | history."""
 
 from __future__ import annotations
 
 import json
 import shutil
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -14,7 +16,7 @@ from rich.console import Console
 from rich.table import Table
 
 from orchestrator import __version__, plan as plan_module
-from orchestrator import project, runner, storage, worktree
+from orchestrator import project, runner, storage, worker, worktree
 
 # la consola de Windows suele ser cp1252: el texto del modelo trae flechas y acentos
 for stream in (sys.stdout, sys.stderr):
@@ -321,6 +323,84 @@ def retry(
         console.print("[yellow]Nota:[/] era una task de un plan; el reintento va suelto en su propio "
                       "worktree, sin los commits de sus dependencias ni reintegracion automatica.")
     _launch(new_id, root, detach)
+
+
+@app.command()
+def integrate(
+    run_id: int,
+    merge: bool = typer.Option(False, "--merge", help="git merge --no-ff a la rama actual del checkout principal"),
+    pr: bool = typer.Option(False, "--pr", help="hace push de la rama y abre un PR con gh"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="solo valida y ensena que haria; no toca nada"),
+) -> None:
+    """Cierra un run ya revisado (PASS en hybrid-review): valida la rama y, si se pide,
+    la mergea localmente y/o abre un PR. Nunca automatico: sin --merge ni --pr solo valida.
+    """
+    row = _row(run_id)
+    root = Path(row["project"])
+    branch = row["branch"]
+
+    if row["status"] != "completed":
+        console.print(f"[red]El run {run_id} esta en '{row['status']}', no 'completed'. No se integra.[/]")
+        raise typer.Exit(1)
+    if not branch:
+        console.print(f"[red]El run {run_id} no dejo rama (no llego a producir commits).[/]")
+        raise typer.Exit(1)
+    if not worktree.git(root, "branch", "--list", branch):
+        console.print(f"[red]La rama {branch} ya no existe (borrada, o worktree limpiado con "
+                      "'agents clean --branches').[/]")
+        raise typer.Exit(1)
+
+    wt = Path(row["worktree"]) if row["worktree"] else None
+    if wt and wt.is_dir():
+        tests = worker.validate(wt, project.resolved(root) or {})
+        for nombre, r in tests.items():
+            mark = "[green]OK  [/]" if r["ok"] else "[red]FAIL[/]"
+            console.print(f"{mark} {nombre:<12} {r['command']}")
+        if any(not r["ok"] for r in tests.values()):
+            console.print(f"[red]La rama {branch} ya no pasa la validacion del proyecto. No se "
+                          "integra.[/]")
+            raise typer.Exit(1)
+    else:
+        console.print(f"[yellow]El worktree del run {run_id} ya no existe; no se puede revalidar. "
+                      "Se confia en el resultado guardado de cuando termino el worker.[/]")
+
+    base = worktree.git(root, "rev-parse", "--abbrev-ref", "HEAD")
+    if dry_run or not (merge or pr):
+        console.print(f"[green]Listo para integrar[/]: {branch} -> {base}")
+        if not (merge or pr):
+            console.print("Pasa --merge y/o --pr para hacerlo de verdad. No se ha tocado nada.")
+        return
+
+    # --untracked-files=no: un fichero sin trackear (p.ej. .agent/project.yaml sin commitear)
+    # no interfiere con el merge; lo que de verdad lo complica son cambios sobre lo trackeado
+    if worktree.git(root, "status", "--porcelain", "--untracked-files=no"):
+        console.print("[red]El checkout principal tiene cambios sin commitear. Guardalos o hazles "
+                      "stash antes de integrar.[/]")
+        raise typer.Exit(1)
+
+    if merge:
+        try:
+            worktree.git(root, "merge", "--no-ff", branch, "-m", f"Merge {branch}")
+        except worktree.GitError as exc:
+            console.print(f"[red]Merge fallido: {exc}[/]")
+            raise typer.Exit(1)
+        console.print(f"[green]Mergeado[/] {branch} -> {base}")
+
+    if pr:
+        if not shutil.which("gh"):
+            console.print("[red]Falta 'gh' (GitHub CLI); instalalo o abre el PR a mano.[/]")
+            raise typer.Exit(1)
+        push = subprocess.run(["git", "push", "-u", "origin", branch], cwd=root,
+                              capture_output=True, text=True, encoding="utf-8", errors="replace")
+        if push.returncode != 0:
+            console.print(f"[red]git push fallo: {(push.stderr or push.stdout).strip()}[/]")
+            raise typer.Exit(1)
+        r = subprocess.run(["gh", "pr", "create", "--base", base, "--head", branch, "--fill"],
+                           cwd=root, capture_output=True, text=True, encoding="utf-8", errors="replace")
+        if r.returncode != 0:
+            console.print(f"[red]gh pr create fallo: {(r.stderr or r.stdout).strip()}[/]")
+            raise typer.Exit(1)
+        console.print(r.stdout.strip())
 
 
 @app.command()
