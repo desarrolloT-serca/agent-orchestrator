@@ -176,8 +176,13 @@ Como funciona:
   las tasks cuyo `files` se solapa;
 - si una task falla, sus dependientes quedan `skipped`;
 - al final se construye `agents/<feature>-integration` aplicando los commits en orden
-  topologico. Si un cherry-pick choca, el estado es `integration_conflict` y no se resuelve
-  automaticamente.
+  topologico. Si un cherry-pick choca, el estado es `integration_conflict` y **no se resuelve
+  automaticamente** (decision de diseño, no falta por hacer) -- pero es asistido (V2): el
+  worktree se deja a medio cherry-pick, con las marcas `<<<<<<<` reales en el fichero que
+  choca, y `issues` trae la ruta exacta y como continuar (`git add` + `git cherry-pick
+  --continue`, o `--abort`). El mismo cherry-pick de las dependencias de una task tambien
+  puede chocar; en ese caso la task queda en `integration_conflict` (no `failed`) con el
+  mismo detalle.
 
 ## Router Flash/Pro (Fase 7)
 

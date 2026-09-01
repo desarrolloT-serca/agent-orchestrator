@@ -125,6 +125,7 @@ def save_result(run_id: int, result: dict) -> None:
         cost=result.get("cost"),
         duration_seconds=result.get("duration_seconds"),
         **({"branch": result["integration_branch"]} if result.get("integration_branch") else {}),
+        **({"worktree": result["integration_worktree"]} if result.get("integration_worktree") else {}),
     )
 
 

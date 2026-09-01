@@ -114,6 +114,35 @@ def test_dependencia_fallida_salta_la_task():
     assert result["integration_branch"] is None
 
 
+def test_integration_conflict_deja_el_worktree_listo_para_resolver():
+    """Fase V2: en vez de abortar el cherry-pick, se deja el conflicto real en el worktree."""
+    root = _repo()
+
+    def _fake_worker_conflictivo(root_, task, config, api_key, model=None, reasoning=None,
+                                 limits=None, on_event=lambda k, t: None):
+        task_id = [l for l in task.splitlines() if l.startswith("# Task:")][0].split(":")[1].strip()
+        (root_ / "shared.txt").write_text(f"linea de {task_id}\n", encoding="utf-8")
+        return {"status": "completed", "summary": f"{task_id} hecho", "files_changed": ["shared.txt"],
+                "tests": {}, "issues": [], "model": model or "fake", "iterations": 1, "tool_calls": 1,
+                "tool_errors": 0, "duration_seconds": 0.1, "usage": {}, "cost": 0.001}
+
+    worker.run = _fake_worker_conflictivo
+    plan = {"feature": "choque", "tasks": [
+        {"id": "a", "description": "escribe shared.txt"},
+        {"id": "b", "description": "tambien escribe shared.txt"},
+    ]}
+    result = scheduler.execute_plan(root, plan_module.Plan(**plan), project.load(root), "fake-key")
+
+    assert result["status"] == "integration_conflict"
+    assert "resuelvelo" in result["issues"][-1].lower()
+    wt = Path(result["integration_worktree"])
+    assert wt.exists()
+    # git dejo el cherry-pick a medio camino, sin abortar: fichero sin fusionar de verdad
+    sin_fusionar = subprocess.run(["git", "diff", "--name-only", "--diff-filter=U"], cwd=wt,
+                                  capture_output=True, text=True).stdout
+    assert "shared.txt" in sin_fusionar
+
+
 def test_clean_conserva_la_rama_de_integracion():
     root = _repo()
     base = worktree.head(root)

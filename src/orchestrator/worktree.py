@@ -16,7 +16,18 @@ class GitError(RuntimeError):
 
 
 class IntegrationConflict(GitError):
-    pass
+    """Cherry-pick que no aplica limpio. Lleva bastante estructura para resolverlo asistido:
+    que task/sha lo causo y que ficheros chocan, no solo un texto de error para el log."""
+
+    def __init__(self, task_id: str, sha: str, files: list[str], git_output: str):
+        self.task_id = task_id
+        self.sha = sha
+        self.files = files
+        super().__init__(
+            f"INTEGRATION_CONFLICT: la task '{task_id}' (sha {sha[:8]}) no aplica limpio -- "
+            f"{len(files)} fichero(s) en conflicto: {', '.join(files) or '(sin detectar)'}. "
+            f"{git_output[:300]}"
+        )
 
 
 def slug(text: str) -> str:
@@ -68,11 +79,17 @@ def commit_all(path: Path, message: str) -> str | None:
     return git(path, "rev-parse", "HEAD")
 
 
-def cherry_pick(path: Path, shas: list[str]) -> None:
-    """Aplica commits en orden. Si hay conflicto aborta y lo senala."""
-    for sha in shas:
+def cherry_pick(path: Path, commits: list[tuple[str, str]]) -> None:
+    """Aplica commits (task_id, sha) en orden.
+
+    Si uno choca, NO aborta: deja el worktree a medio cherry-pick, con las marcas <<<<<<<
+    en los ficheros que chocan, tal cual lo dejaria un `git cherry-pick` a mano. Resolucion
+    asistida en vez de perder el contexto del conflicto: cd al worktree, edita, `git add`,
+    `git cherry-pick --continue` (o `--abort` si se prefiere descartar).
+    """
+    for task_id, sha in commits:
         r = subprocess.run(["git", "cherry-pick", sha], cwd=path, capture_output=True, text=True,
                            timeout=120, encoding="utf-8", errors="replace")
         if r.returncode != 0:
-            git(path, "cherry-pick", "--abort", check=False)
-            raise IntegrationConflict(f"INTEGRATION_CONFLICT en {sha[:8]}: {(r.stdout + r.stderr).strip()[:500]}")
+            ficheros = git(path, "diff", "--name-only", "--diff-filter=U", check=False).splitlines()
+            raise IntegrationConflict(task_id, sha, ficheros, (r.stdout + r.stderr).strip())

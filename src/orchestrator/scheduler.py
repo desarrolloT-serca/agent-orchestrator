@@ -33,7 +33,7 @@ def _prompt(feature: str, task: plan_module.Task) -> str:
 
 
 def _run_task(root: Path, feature: str, task: plan_module.Task, run_id: int, plan_id: int, config: dict,
-              api_key: str, base: str, dep_shas: list[str],
+              api_key: str, base: str, dep_shas: list[tuple[str, str]],
               on_event: Callable[[str, str], None]) -> dict:
     # plan_id en el nombre: dos ejecuciones de la misma feature no se pisan ni se borran ramas
     name = f"{worktree.slug(feature)}-{plan_id}-{worktree.slug(task.id)}"
@@ -62,6 +62,13 @@ def _run_task(root: Path, feature: str, task: plan_module.Task, run_id: int, pla
             result["sha"] = worktree.commit_all(path, f"agents({task.id}): {feature}")
         result["branch"] = branch
         result["worktree"] = str(path)
+    except worktree.IntegrationConflict as exc:
+        # dependencias de esta task chocan al aplicarse aqui: worktree queda a medio cherry-pick,
+        # listo para resolverlo ahi mismo en vez de perder el contexto
+        result = {"status": "integration_conflict", "summary": str(exc),
+                 "issues": [f"conflicto aplicando dependencias en {path} (rama {branch}): edita "
+                           "los ficheros marcados, 'git add' y 'git cherry-pick --continue' (o "
+                           "'--abort' y relanza la task suelta despues de integrar a mano)."]}
     except Exception as exc:  # noqa: BLE001 - el fallo de una task no tumba el plan
         result = {"status": "failed", "summary": f"{exc.__class__.__name__}: {exc}"}
     on_event("task", f"[{task.id}] {result['status']}")
@@ -113,7 +120,7 @@ def execute_plan(root: Path, feature_plan: plan_module.Plan, config: dict, api_k
                 # ownership: no dos tasks tocando los mismos ficheros a la vez
                 if any(plan_module.overlap(task.files, otra.files) for otra in corriendo):
                     continue
-                dep_shas = [shas[d] for d in task.depends_on if d in shas]
+                dep_shas = [(d, shas[d]) for d in task.depends_on if d in shas]
                 future = pool.submit(_run_task, root, feature, task, runs[task_id], plan_id, config,
                                      api_key, base, dep_shas, on_event)
                 futures[future] = task
@@ -130,15 +137,24 @@ def execute_plan(root: Path, feature_plan: plan_module.Plan, config: dict, api_k
 
     completadas = all(r["status"] == "completed" for r in results.values())
     status = "completed" if completadas and len(results) == len(feature_plan.tasks) else "failed"
-    branch = summary = None
+    branch = summary = integration_worktree = None
     if status == "completed" and shas:
         name = f"{worktree.slug(feature)}-{plan_id}-integration"
         path, branch = worktree.create(root, name, base)
+        integration_worktree = str(path)
         on_event("task", f"[integracion] cherry-pick en {path.name}")
         try:
-            worktree.cherry_pick(path, [shas[t.id] for t in feature_plan.order() if t.id in shas])
+            worktree.cherry_pick(path, [(t.id, shas[t.id]) for t in feature_plan.order() if t.id in shas])
         except worktree.IntegrationConflict as exc:
             status, summary = "integration_conflict", str(exc)
+            on_event("task", f"[integracion] conflicto en '{exc.task_id}': {', '.join(exc.files)}")
+
+    issues = [i for r in results.values() for i in r.get("issues", [])]
+    if status == "integration_conflict":
+        # asistida, no automatica: se deja el worktree a medio cherry-pick para resolverlo ahi
+        issues.append(f"{summary} Resuelvelo en {integration_worktree} (rama {branch}): edita los "
+                      "ficheros marcados, 'git add' y 'git cherry-pick --continue' (o '--abort' "
+                      "para descartar solo esa task y decidir otra estrategia).")
 
     return {
         "status": status,
@@ -146,9 +162,10 @@ def execute_plan(root: Path, feature_plan: plan_module.Plan, config: dict, api_k
                               f"/{len(feature_plan.tasks)} tasks completadas",
         "feature": feature,
         "integration_branch": branch,
+        "integration_worktree": integration_worktree,
         "tasks": {tid: {k: v for k, v in r.items() if k != "summary"} for tid, r in results.items()},
         "files_changed": sorted({f for r in results.values() for f in r.get("files_changed", [])}),
-        "issues": [i for r in results.values() for i in r.get("issues", [])],
+        "issues": issues,
         "iterations": sum(r.get("iterations", 0) for r in results.values()),
         "tool_calls": sum(r.get("tool_calls", 0) for r in results.values()),
         "tool_errors": sum(r.get("tool_errors", 0) for r in results.values()),

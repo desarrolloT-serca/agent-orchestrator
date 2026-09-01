@@ -144,6 +144,26 @@ pasen: puede haber duplicado logica, saltado convenciones o resuelto otro proble
 - Falta de fondo: `agents retry <id> --model deepseek-v4-pro`.
 - Requisito mal explicado: reescribe el task.md y vuelve a lanzarlo.
 
+### `integration_conflict`: dos tasks tocaron lo mismo al fusionar
+
+El orquestador no resuelve conflictos solo (decision de diseño, no falta por hacer). El
+`result["issues"]` del plan trae el worktree exacto y la rama; el cherry-pick se dejo a
+medio camino ahi (sin abortar), con las marcas `<<<<<<<` reales en el fichero que choca:
+
+```bash
+cd .agent-worktrees/<feature>-<id>-integration
+git status                    # que fichero(s), en que task
+```
+
+Tu decides, no lo deduzcas de memoria:
+
+- conflicto trivial (import duplicado, orden de rutas): resuelvelo tu ahi mismo,
+  `git add <fichero>` y `git cherry-pick --continue`;
+- conflicto de fondo (dos tasks reimplementaron lo mismo, contrato no fijado — ver la
+  nota de backend/frontend en paralelo del paso 4): `git cherry-pick --abort`, decide que
+  version se queda y relanza la otra task con el requisito corregido;
+- si dudas, enseña el diff en conflicto al usuario antes de decidir.
+
 ## 8. Cierre
 
 La rama `agents/<feature>-integration` queda lista pero **no se mergea sola**.
