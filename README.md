@@ -285,9 +285,12 @@ completa. Se corrigieron:
   significa un contenedor por worker, que es una pieza de infraestructura que el roadmap
   descarta explicitamente para esta V1 (`git/agent-orchestrator/ROADMAP.md`, seccion 7).
   Usalo sobre repos de confianza, no sobre codigo que no revisarias tu mismo.
-- **`max_parallel` es por ejecucion, no global.** Dos `agents run plan.yaml` simultaneos (dos
-  terminales) pueden sumar mas workers que el limite configurado. Un daemon con cola global lo
-  resolveria; para un desarrollador trabajando solo, no ha compensado la complejidad todavia.
+- ~~`max_parallel` es por ejecucion, no global~~ **corregido (V2).** `router.run_escalated`
+  adquiere un slot en SQLite (`storage.acquire_slot`, `BEGIN IMMEDIATE` para que el check y la
+  marca sean atomicos entre procesos) antes de invocar al worker: task suelta o task de un plan,
+  da igual cuantos `agents run` esten activos en terminales distintas, nunca hay mas de
+  `workers.max_parallel` workers `running` a la vez para el mismo proyecto. El que se pasa del
+  limite queda `queued` hasta que se libera un hueco; `agents status` lo refleja en vivo.
 - **Reconciliacion de procesos parcial.** Si el proceso de un run desaparece sin avisar (PC
   apagado, kill -9), el run se queda `running` en SQLite hasta que alguien lo note; `stop`
   verifica que el pid siga siendo el worker antes de matarlo, pero nada lo detecta solo.

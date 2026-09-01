@@ -22,7 +22,12 @@ def execute(run_id: int, on_event: Callable[[str, str], None] = lambda kind, tex
     if row is None:
         raise SystemExit(f"run {run_id} no encontrado")
     root = Path(row["project"])
-    storage.update_run(run_id, status="running", pid=os.getpid(), started_at=storage.now())
+    fields = {"pid": os.getpid(), "started_at": storage.now()}
+    if row["kind"] == "plan":
+        # el contenedor del plan no consume slot de worker (solo orquesta); sus tasks
+        # hijas pasan por acquire_slot y se quedan 'queued' hasta que haya hueco global
+        fields["status"] = "running"
+    storage.update_run(run_id, **fields)
     try:
         config = project.resolved(root) or {}
         key = project.api_key(root)

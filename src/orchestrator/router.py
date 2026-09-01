@@ -83,6 +83,12 @@ def run_escalated(
     extra_fields: dict | None = None,
 ) -> dict:
     """Ejecuta la tarea reintentando y escalando de modelo. Cada intento es un run propio."""
+    max_parallel = config.get("workers", {}).get("max_parallel", 3)
+    storage.acquire_slot(run_id, max_parallel, on_event=on_event)
+    # 'root' aqui es el worktree donde trabaja el worker, no la raiz del proyecto: para el
+    # create_run del reintento hace falta la raiz real (columna 'project'), si no el reintento
+    # queda huerfano de 'agents status/history/metrics' del proyecto y de la cola global
+    proyecto = storage.get_run(run_id)["project"]
     secuencia = attempts(config, model, task)
     if not escalate:
         secuencia = secuencia[:1]
@@ -100,8 +106,12 @@ def run_escalated(
             break
         siguiente = secuencia[i + 1]
         on_event("task", f"{result['status']}: escalando a {siguiente[0]}/{siguiente[1]}")
-        actual = storage.create_run(root, task, parent_id=actual, model=siguiente[0],
+        actual = storage.create_run(proyecto, task, parent_id=actual, model=siguiente[0],
                                     kind="retry", **(extra_fields or {}))
+        # el slot ya esta reservado (mismo hilo/proceso que el intento anterior); sin esto la
+        # fila del reintento quedaria 'queued' mientras trabaja de verdad, y acquire_slot de
+        # otros procesos la ignoraria al contar workers activos
+        storage.update_run(actual, status="running", started_at=storage.now())
 
     result["run_id"] = actual
     return result

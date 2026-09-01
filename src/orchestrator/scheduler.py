@@ -38,7 +38,8 @@ def _run_task(root: Path, feature: str, task: plan_module.Task, run_id: int, pla
     # plan_id en el nombre: dos ejecuciones de la misma feature no se pisan ni se borran ramas
     name = f"{worktree.slug(feature)}-{plan_id}-{worktree.slug(task.id)}"
     try:
-        storage.update_run(run_id, status="running", started_at=storage.now())
+        # sigue 'queued' hasta que router.run_escalated adquiera el slot global (acquire_slot);
+        # crear el worktree es local y barato, no consume hueco de worker
         path, branch = worktree.create(root, name, base)
         storage.update_run(run_id, worktree=str(path), branch=branch)
         if dep_shas:

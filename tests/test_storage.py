@@ -4,6 +4,8 @@ import json
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
@@ -73,6 +75,33 @@ def test_fallo_persistido():
     run_id = storage.create_run(root, "algo")
     assert runner.execute(run_id)["status"] == "failed"
     assert "DEEPSEEK_API_KEY" in storage.get_run(run_id)["summary"]
+
+
+def test_acquire_slot_limita_concurrencia_global():
+    """Cola global (fase V2): N tasks del mismo proyecto, max_parallel=2, nunca >2 'running' a la vez."""
+    root = Path(tempfile.mkdtemp()).resolve()
+    ids = [storage.create_run(root, f"tarea-{i}") for i in range(5)]
+    activos, pico, lock = 0, 0, threading.Lock()
+
+    def trabajo(run_id: int) -> None:
+        nonlocal activos, pico
+        storage.acquire_slot(run_id, max_parallel=2, poll_seconds=0.05)
+        with lock:
+            activos += 1
+            pico = max(pico, activos)
+        time.sleep(0.1)
+        with lock:
+            activos -= 1
+        storage.update_run(run_id, status="completed")
+
+    hilos = [threading.Thread(target=trabajo, args=(rid,)) for rid in ids]
+    for h in hilos:
+        h.start()
+    for h in hilos:
+        h.join()
+
+    assert pico <= 2
+    assert all(storage.get_run(rid)["status"] == "completed" for rid in ids)
 
 
 if __name__ == "__main__":

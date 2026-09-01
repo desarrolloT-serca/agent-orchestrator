@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import time
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
+from typing import Callable
 
 HOME = Path.home() / ".agent-orchestrator"
 DB_PATH = HOME / "orchestrator.db"
@@ -124,6 +126,39 @@ def save_result(run_id: int, result: dict) -> None:
         duration_seconds=result.get("duration_seconds"),
         **({"branch": result["integration_branch"]} if result.get("integration_branch") else {}),
     )
+
+
+def acquire_slot(run_id: int, max_parallel: int, poll_seconds: float = 2.0,
+                 on_event: Callable[[str, str], None] = lambda kind, text: None) -> None:
+    """Bloquea hasta que haya hueco global para este proyecto y marca la fila 'running'.
+
+    Cola compartida entre procesos via SQLite: sin daemon, BEGIN IMMEDIATE hace que el
+    check (cuantos 'running' hay ya) y la marca sean atomicos frente a otros procesos que
+    llamen a esto a la vez para el mismo proyecto.
+    """
+    avisado = False
+    while True:
+        with connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute("SELECT project FROM runs WHERE id = ?", (run_id,)).fetchone()
+            if row is None:
+                return  # run borrado o inexistente: nada que esperar
+            activos = conn.execute(
+                "SELECT COUNT(*) FROM runs WHERE project = ? AND status = 'running' "
+                "AND kind IN ('task', 'retry') AND id != ?",
+                (row["project"], run_id),
+            ).fetchone()[0]
+            if activos < max_parallel:
+                conn.execute(
+                    "UPDATE runs SET status = 'running', started_at = COALESCE(started_at, ?) WHERE id = ?",
+                    (now(), run_id),
+                )
+                return
+            conn.execute("UPDATE runs SET status = 'queued' WHERE id = ?", (run_id,))
+        if not avisado:
+            on_event("task", f"cola llena ({activos}/{max_parallel} workers activos en el proyecto); esperando hueco")
+            avisado = True
+        time.sleep(poll_seconds)
 
 
 def get_run(run_id: int) -> sqlite3.Row | None:
