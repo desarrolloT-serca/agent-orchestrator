@@ -137,9 +137,14 @@ def spawn(run_id: int, root: Path) -> int:
     """Lanza el run en un proceso independiente de esta sesion. Devuelve el pid."""
     log = storage.log_path(run_id).open("a", encoding="utf-8", buffering=1)
     flags = getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+    # AGENT_ORCHESTRATOR_HOME explicito: el hijo reimporta storage.py de cero y por defecto
+    # usaria ~/.agent-orchestrator real, aunque el padre este apuntando a una BD de prueba
+    # (storage.DB_PATH reasignado en memoria no se hereda solo). Sin esto, un test que
+    # dispara spawn() puede acabar escribiendo runs falsos sobre datos reales.
+    env = {**os.environ, "AGENT_ORCHESTRATOR_HOME": str(storage.DB_PATH.parent)}
     proc = subprocess.Popen(
         [sys.executable, "-m", "orchestrator.runner", str(run_id)],
-        cwd=root, stdout=log, stderr=log, stdin=subprocess.DEVNULL,
+        cwd=root, stdout=log, stderr=log, stdin=subprocess.DEVNULL, env=env,
         creationflags=flags if os.name == "nt" else 0,
         start_new_session=os.name != "nt",
     )

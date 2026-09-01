@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import time
 from contextlib import contextmanager
@@ -10,7 +11,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
-HOME = Path.home() / ".agent-orchestrator"
+# AGENT_ORCHESTRATOR_HOME: solo para que runner.spawn() le pase al subproceso desacoplado
+# la misma BD que uso el padre (evita que un subproceso real "se escape" a la BD global de
+# ~/.agent-orchestrator cuando el padre esta usando una de prueba). No es para uso manual.
+HOME = Path(os.environ.get("AGENT_ORCHESTRATOR_HOME") or (Path.home() / ".agent-orchestrator"))
 DB_PATH = HOME / "orchestrator.db"
 LOGS = HOME / "logs"
 

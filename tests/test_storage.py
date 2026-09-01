@@ -77,6 +77,28 @@ def test_fallo_persistido():
     assert "DEEPSEEK_API_KEY" in storage.get_run(run_id)["summary"]
 
 
+def test_spawn_no_se_escapa_a_la_bd_global():
+    """El subproceso de --detach debe escribir en la MISMA BD que uso el padre para crear
+    el run, no en ~/.agent-orchestrator real -- si no, un run de prueba puede acabar
+    escribiendo sobre una fila real con el mismo id (paso de verdad una vez)."""
+    root = _repo()
+    (root / ".env").unlink()  # sin API key: falla rapido y sin red, pero deja rastro real
+    run_id = storage.create_run(root, "algo")
+
+    pid = runner.spawn(run_id, root)
+    for _ in range(40):
+        row = storage.get_run(run_id)
+        if row["status"] != "queued":
+            break
+        time.sleep(0.25)
+    else:
+        raise AssertionError(f"el subproceso (pid {pid}) no actualizo el run a tiempo")
+
+    assert row["status"] == "failed"
+    assert "DEEPSEEK_API_KEY" in row["summary"]
+    assert row["pid"] == pid
+
+
 def _pid_muerto() -> int:
     """Un pid que existio y ya no: se espera a que el proceso termine antes de devolverlo."""
     proc = subprocess.Popen([sys.executable, "-c", "pass"])
