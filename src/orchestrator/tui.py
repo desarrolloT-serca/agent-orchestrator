@@ -43,6 +43,10 @@ def _detalle(row: sqlite3.Row) -> str:
     campos = ("id", "status", "kind", "feature", "task_id", "model", "reasoning",
              "branch", "worktree", "cost", "duration_seconds", "summary")
     texto = "\n".join(f"[bold]{c}[/]: {row[c]}" for c in campos if row[c] not in (None, ""))
+    tokens = [f"prompt {row['prompt_tokens']}", f"cache_hit {row['cached_tokens']}",
+             f"completion {row['completion_tokens']}"] if row["prompt_tokens"] is not None else []
+    if tokens:
+        texto += f"\n[bold]tokens[/]: {', '.join(tokens)}"
     for campo in ("issues", "tests"):
         if row[campo]:
             valor = json.loads(row[campo])
@@ -51,8 +55,15 @@ def _detalle(row: sqlite3.Row) -> str:
     return texto or "(sin datos)"
 
 
+def _totales(rows: list[sqlite3.Row]) -> str:
+    coste = sum(r["cost"] or 0 for r in rows)
+    tokens = sum((r["prompt_tokens"] or 0) + (r["completion_tokens"] or 0) for r in rows)
+    return f"{len(rows)} runs · ${coste:.4f} · {tokens:_} tokens".replace("_", ".")
+
+
 class Dashboard(App):
     CSS = """
+    #totales { height: 1; padding: 0 1; color: $text-muted; }
     #runs { width: 65%; }
     #panel { width: 35%; }
     #detail { height: 40%; border: solid $accent; padding: 0 1; }
@@ -75,6 +86,7 @@ class Dashboard(App):
 
     def compose(self) -> ComposeResult:
         yield Header()
+        yield Static(id="totales")
         with Horizontal():
             yield DataTable(id="runs")
             with Vertical(id="panel"):
@@ -106,6 +118,7 @@ class Dashboard(App):
         else:
             self.selected_id = rows[0]["id"]
             tabla.move_cursor(row=0, animate=False)
+        self.query_one("#totales", Static).update(_totales(rows))
         self.refresh_detail()
 
     def refresh_detail(self) -> None:

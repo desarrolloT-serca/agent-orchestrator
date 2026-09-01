@@ -90,6 +90,39 @@ def test_flechas_navegan_y_el_refresco_periodico_no_te_devuelve_arriba():
     asyncio.run(cuerpo())
 
 
+def test_barra_de_totales_suma_coste_y_tokens():
+    root = _repo()
+    storage.create_run(root, "a", status="completed", cost=0.01, prompt_tokens=100,
+                       completion_tokens=20)
+    storage.create_run(root, "b", status="completed", cost=0.02, prompt_tokens=200,
+                       completion_tokens=50)
+
+    async def cuerpo():
+        app = tui.Dashboard(root)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            texto = str(app.query_one("#totales").content)
+            assert "2 runs" in texto and "0.0300" in texto and "370" in texto  # 100+20+200+50
+
+    asyncio.run(cuerpo())
+
+
+def test_detalle_muestra_tokens_cuando_hay():
+    root = _repo()
+    run_id = storage.create_run(root, "a", status="completed", prompt_tokens=100,
+                                cached_tokens=40, completion_tokens=20)
+
+    async def cuerpo():
+        app = tui.Dashboard(root)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            assert app.selected_id == run_id
+            texto = str(app.query_one("#detail").content)
+            assert "prompt 100" in texto and "cache_hit 40" in texto and "completion 20" in texto
+
+    asyncio.run(cuerpo())
+
+
 def test_stop_selected_no_revienta_sin_seleccion():
     root = _repo()
 
